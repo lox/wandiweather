@@ -83,3 +83,11 @@ type ForecastVerification struct {
 	BiasTempMin     sql.NullFloat64
 	CreatedAt       time.Time
 }
+
+type VerificationStats struct {
+	Count      int
+	AvgMaxBias sql.NullFloat64
+	AvgMinBias sql.NullFloat64
+	MAEMax     sql.NullFloat64
+	MAEMin     sql.NullFloat64
+}

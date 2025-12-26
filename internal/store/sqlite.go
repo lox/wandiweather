@@ -321,3 +321,66 @@ func (s *Store) GetPrimaryStation() (*models.Station, error) {
 	}
 	return &st, nil
 }
+
+func (s *Store) GetLatestForecasts() (map[string][]models.Forecast, error) {
+	rows, err := s.db.Query(`
+		WITH latest AS (
+			SELECT source, MAX(fetched_at) as max_fetched
+			FROM forecasts
+			GROUP BY source
+		)
+		SELECT f.id, f.source, f.fetched_at, f.valid_date, f.day_of_forecast, 
+		       f.temp_max, f.temp_min, f.precip_chance, f.narrative
+		FROM forecasts f
+		JOIN latest l ON f.source = l.source AND f.fetched_at = l.max_fetched
+		WHERE f.valid_date >= DATE('now')
+		ORDER BY f.valid_date, f.source
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string][]models.Forecast)
+	for rows.Next() {
+		var f models.Forecast
+		if err := rows.Scan(&f.ID, &f.Source, &f.FetchedAt, &f.ValidDate, &f.DayOfForecast,
+			&f.TempMax, &f.TempMin, &f.PrecipChance, &f.Narrative); err != nil {
+			return nil, err
+		}
+		result[f.Source] = append(result[f.Source], f)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) GetVerificationStats() (map[string]models.VerificationStats, error) {
+	rows, err := s.db.Query(`
+		SELECT 
+			f.source,
+			COUNT(*) as count,
+			AVG(v.bias_temp_max) as avg_max_bias,
+			AVG(v.bias_temp_min) as avg_min_bias,
+			AVG(ABS(v.bias_temp_max)) as mae_max,
+			AVG(ABS(v.bias_temp_min)) as mae_min
+		FROM forecast_verification v
+		JOIN forecasts f ON v.forecast_id = f.id
+		WHERE v.bias_temp_max IS NOT NULL
+		GROUP BY f.source
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]models.VerificationStats)
+	for rows.Next() {
+		var source string
+		var stats models.VerificationStats
+		if err := rows.Scan(&source, &stats.Count, &stats.AvgMaxBias, &stats.AvgMinBias,
+			&stats.MAEMax, &stats.MAEMin); err != nil {
+			return nil, err
+		}
+		result[source] = stats
+	}
+	return result, rows.Err()
+}

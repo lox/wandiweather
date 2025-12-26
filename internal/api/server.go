@@ -37,9 +37,11 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/partials/current", s.handleCurrentPartial)
 	mux.HandleFunc("/partials/chart", s.handleChartPartial)
+	mux.HandleFunc("/partials/forecast", s.handleForecastPartial)
 	mux.HandleFunc("/api/current", s.handleAPICurrent)
 	mux.HandleFunc("/api/history", s.handleAPIHistory)
 	mux.HandleFunc("/api/stations", s.handleAPIStations)
+	mux.HandleFunc("/api/forecast", s.handleAPIForecast)
 
 	server := &http.Server{
 		Addr:    ":" + s.port,
@@ -271,4 +273,106 @@ func (s *Server) handleAPIStations(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stations)
+}
+
+type ForecastData struct {
+	Days     []ForecastDay
+	WUStats  *models.VerificationStats
+	BOMStats *models.VerificationStats
+	HasStats bool
+}
+
+type ForecastDay struct {
+	Date    time.Time
+	DayName string
+	DateStr string
+	IsToday bool
+	WU      *models.Forecast
+	BOM     *models.Forecast
+}
+
+func (s *Server) getForecastData() (*ForecastData, error) {
+	forecasts, err := s.store.GetLatestForecasts()
+	if err != nil {
+		return nil, err
+	}
+
+	stats, err := s.store.GetVerificationStats()
+	if err != nil {
+		log.Printf("get verification stats: %v", err)
+	}
+
+	loc, _ := time.LoadLocation("Australia/Melbourne")
+	today := time.Now().In(loc)
+	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+
+	dayMap := make(map[string]*ForecastDay)
+	
+	for _, fc := range forecasts["wu"] {
+		key := fc.ValidDate.Format("2006-01-02")
+		if dayMap[key] == nil {
+			dayMap[key] = &ForecastDay{
+				Date:    fc.ValidDate,
+				DayName: fc.ValidDate.Weekday().String()[:3],
+				DateStr: fc.ValidDate.Format("Jan 2"),
+				IsToday: fc.ValidDate.Equal(todayDate),
+			}
+		}
+		f := fc
+		dayMap[key].WU = &f
+	}
+
+	for _, fc := range forecasts["bom"] {
+		key := fc.ValidDate.Format("2006-01-02")
+		if dayMap[key] == nil {
+			dayMap[key] = &ForecastDay{
+				Date:    fc.ValidDate,
+				DayName: fc.ValidDate.Weekday().String()[:3],
+				DateStr: fc.ValidDate.Format("Jan 2"),
+				IsToday: fc.ValidDate.Equal(todayDate),
+			}
+		}
+		f := fc
+		dayMap[key].BOM = &f
+	}
+
+	var days []ForecastDay
+	for i := 0; i < 7; i++ {
+		date := todayDate.AddDate(0, 0, i)
+		key := date.Format("2006-01-02")
+		if day, ok := dayMap[key]; ok {
+			days = append(days, *day)
+		}
+	}
+
+	data := &ForecastData{Days: days}
+	if wuStats, ok := stats["wu"]; ok {
+		data.WUStats = &wuStats
+		data.HasStats = true
+	}
+	if bomStats, ok := stats["bom"]; ok {
+		data.BOMStats = &bomStats
+		data.HasStats = true
+	}
+
+	return data, nil
+}
+
+func (s *Server) handleForecastPartial(w http.ResponseWriter, r *http.Request) {
+	data, err := s.getForecastData()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.tmpl.ExecuteTemplate(w, "forecast.html", data)
+}
+
+func (s *Server) handleAPIForecast(w http.ResponseWriter, r *http.Request) {
+	data, err := s.getForecastData()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
 }

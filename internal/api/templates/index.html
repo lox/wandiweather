@@ -53,6 +53,43 @@
         .station-name { color: #888; font-size: 0.7rem; }
         .chart-container { height: 300px; position: relative; }
         .updated { font-size: 0.75rem; color: #666; margin-top: 1rem; }
+        .forecast-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+        @media (max-width: 700px) {
+            .forecast-grid { grid-template-columns: repeat(4, 1fr); }
+        }
+        .forecast-day {
+            background: #1f4068;
+            border-radius: 8px;
+            padding: 0.75rem;
+            text-align: center;
+        }
+        .forecast-day.today {
+            border: 1px solid #4fc3f7;
+        }
+        .day-name { font-weight: 600; color: #4fc3f7; }
+        .day-date { font-size: 0.7rem; color: #888; margin-bottom: 0.5rem; }
+        .temp-max { font-size: 1.5rem; font-weight: 300; }
+        .temp-min { font-size: 1rem; color: #888; }
+        .precip { font-size: 0.75rem; color: #4fc3f7; margin-top: 0.25rem; }
+        .bom-temps { font-size: 0.7rem; color: #666; margin-top: 0.5rem; }
+        .verification-stats {
+            margin-top: 1rem;
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+        .stat-badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+        }
+        .stat-badge.wu { background: #4fc3f722; color: #4fc3f7; }
+        .stat-badge.bom { background: #ff6b6b22; color: #ff6b6b; }
     </style>
 </head>
 <body>
@@ -64,6 +101,9 @@
             </div>
             <div class="card wide" id="chart-container" hx-get="/partials/chart" hx-trigger="load, every 300s" hx-swap="innerHTML">
                 Loading chart...
+            </div>
+            <div id="forecast-container" hx-get="/partials/forecast" hx-trigger="load, every 3600s" hx-swap="innerHTML">
+                Loading forecast...
             </div>
         </div>
     </div>
