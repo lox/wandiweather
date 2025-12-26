@@ -1,0 +1,59 @@
+<h2>Last 24 Hours — Temperature by Elevation</h2>
+<div class="chart-container">
+    <canvas id="tempChart"></canvas>
+</div>
+<script>
+(function() {
+    const ctx = document.getElementById('tempChart').getContext('2d');
+    const labels = [{{range $i, $l := .Labels}}{{if $i}},{{end}}"{{$l}}"{{end}}];
+    const datasets = [
+        {{range $i, $s := .Series}}
+        {{if $i}},{{end}}{
+            label: '{{$s.Name}}',
+            data: [{{range $j, $v := $s.Data}}{{if $j}},{{end}}{{$v}}{{end}}],
+            borderColor: '{{$s.Color}}',
+            backgroundColor: '{{$s.Color}}22',
+            fill: false,
+            tension: 0.3,
+            pointRadius: 0,
+            pointHitRadius: 10,
+            borderWidth: 2
+        }
+        {{end}}
+    ];
+    
+    if (window.tempChartInstance) {
+        window.tempChartInstance.destroy();
+    }
+    
+    window.tempChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: { color: '#888', boxWidth: 12 }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#888', maxTicksLimit: 12 },
+                    grid: { color: '#1f4068' }
+                },
+                y: {
+                    ticks: { color: '#888' },
+                    grid: { color: '#1f4068' }
+                }
+            }
+        }
+    });
+})();
+</script>

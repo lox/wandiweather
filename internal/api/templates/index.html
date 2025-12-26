@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WandiWeather</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+        .container { max-width: 1000px; margin: 0 auto; }
+        h1 { font-size: 1.5rem; margin-bottom: 1rem; color: #4fc3f7; }
+        .grid { display: grid; gap: 1rem; }
+        @media (min-width: 700px) {
+            .grid { grid-template-columns: repeat(2, 1fr); }
+            .grid .wide { grid-column: span 2; }
+        }
+        .card {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid #1f4068;
+        }
+        .card h2 { font-size: 0.9rem; color: #888; margin-bottom: 0.75rem; text-transform: uppercase; }
+        .temp-big { font-size: 4rem; font-weight: 300; }
+        .temp-unit { font-size: 1.5rem; color: #888; }
+        .stats { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem; }
+        .stat { flex: 1; min-width: 80px; }
+        .stat-label { font-size: 0.75rem; color: #888; }
+        .stat-value { font-size: 1.25rem; }
+        .inversion { padding: 0.75rem; border-radius: 8px; margin-top: 1rem; font-size: 0.9rem; }
+        .inversion.active { background: #ff6b6b22; border: 1px solid #ff6b6b; }
+        .inversion.inactive { background: #4ecdc422; border: 1px solid #4ecdc4; }
+        .tier { margin-bottom: 1rem; }
+        .tier-label { font-size: 0.8rem; color: #4fc3f7; margin-bottom: 0.5rem; }
+        .tier-elev { color: #666; }
+        .stations { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+        .station {
+            background: #1f4068;
+            padding: 0.5rem 0.75rem;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            min-width: 90px;
+        }
+        .station.primary { border: 1px solid #4fc3f7; }
+        .station-name { color: #888; font-size: 0.7rem; }
+        .chart-container { height: 300px; position: relative; }
+        .updated { font-size: 0.75rem; color: #666; margin-top: 1rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌡️ WandiWeather</h1>
+        <div class="grid">
+            <div id="current" hx-get="/partials/current" hx-trigger="load, every 60s" hx-swap="innerHTML">
+                Loading...
+            </div>
+            <div class="card wide" id="chart-container" hx-get="/partials/chart" hx-trigger="load, every 300s" hx-swap="innerHTML">
+                Loading chart...
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,274 @@
+package api
+
+import (
+	"context"
+	"embed"
+	"encoding/json"
+	"html/template"
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/lox/wandiweather/internal/models"
+	"github.com/lox/wandiweather/internal/store"
+)
+
+//go:embed templates/*
+var templateFS embed.FS
+
+type Server struct {
+	store  *store.Store
+	port   string
+	tmpl   *template.Template
+}
+
+func NewServer(store *store.Store, port string) *Server {
+	tmpl := template.Must(template.ParseFS(templateFS, "templates/*.html"))
+	return &Server{
+		store: store,
+		port:  port,
+		tmpl:  tmpl,
+	}
+}
+
+func (s *Server) Run(ctx context.Context) error {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/", s.handleIndex)
+	mux.HandleFunc("/partials/current", s.handleCurrentPartial)
+	mux.HandleFunc("/partials/chart", s.handleChartPartial)
+	mux.HandleFunc("/api/current", s.handleAPICurrent)
+	mux.HandleFunc("/api/history", s.handleAPIHistory)
+	mux.HandleFunc("/api/stations", s.handleAPIStations)
+
+	server := &http.Server{
+		Addr:    ":" + s.port,
+		Handler: mux,
+	}
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		server.Shutdown(shutdownCtx)
+	}()
+
+	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+		return err
+	}
+	return nil
+}
+
+type CurrentData struct {
+	Primary      *models.Observation
+	Stations     map[string]*models.Observation
+	StationMeta  map[string]models.Station
+	ValleyFloor  []StationReading
+	MidSlope     []StationReading
+	Upper        []StationReading
+	Inversion    *InversionStatus
+	LastUpdated  time.Time
+}
+
+type StationReading struct {
+	Station models.Station
+	Obs     *models.Observation
+}
+
+type InversionStatus struct {
+	Active      bool
+	Strength    float64
+	ValleyAvg   float64
+	MidAvg      float64
+	UpperAvg    float64
+}
+
+func (s *Server) getCurrentData() (*CurrentData, error) {
+	stations, err := s.store.GetActiveStations()
+	if err != nil {
+		return nil, err
+	}
+
+	data := &CurrentData{
+		Stations:    make(map[string]*models.Observation),
+		StationMeta: make(map[string]models.Station),
+		LastUpdated: time.Now(),
+	}
+
+	var valleyTemps, midTemps, upperTemps []float64
+
+	for _, st := range stations {
+		data.StationMeta[st.StationID] = st
+		obs, err := s.store.GetLatestObservation(st.StationID)
+		if err != nil {
+			log.Printf("get latest %s: %v", st.StationID, err)
+			continue
+		}
+		if obs == nil {
+			continue
+		}
+		data.Stations[st.StationID] = obs
+
+		if st.IsPrimary {
+			data.Primary = obs
+		}
+
+		reading := StationReading{Station: st, Obs: obs}
+		switch st.ElevationTier {
+		case "valley_floor":
+			data.ValleyFloor = append(data.ValleyFloor, reading)
+			if obs.Temp.Valid {
+				valleyTemps = append(valleyTemps, obs.Temp.Float64)
+			}
+		case "mid_slope":
+			data.MidSlope = append(data.MidSlope, reading)
+			if obs.Temp.Valid {
+				midTemps = append(midTemps, obs.Temp.Float64)
+			}
+		case "upper":
+			data.Upper = append(data.Upper, reading)
+			if obs.Temp.Valid {
+				upperTemps = append(upperTemps, obs.Temp.Float64)
+			}
+		}
+	}
+
+	if len(valleyTemps) > 0 && len(upperTemps) > 0 {
+		valleyAvg := avg(valleyTemps)
+		midAvg := avg(midTemps)
+		upperAvg := avg(upperTemps)
+		expectedDiff := (400.0 - 117.0) / 1000.0 * 6.5
+		actualDiff := upperAvg - valleyAvg
+
+		data.Inversion = &InversionStatus{
+			Active:    actualDiff > expectedDiff+2,
+			Strength:  actualDiff - expectedDiff,
+			ValleyAvg: valleyAvg,
+			MidAvg:    midAvg,
+			UpperAvg:  upperAvg,
+		}
+	}
+
+	return data, nil
+}
+
+func avg(vals []float64) float64 {
+	if len(vals) == 0 {
+		return 0
+	}
+	sum := 0.0
+	for _, v := range vals {
+		sum += v
+	}
+	return sum / float64(len(vals))
+}
+
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := s.getCurrentData()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.tmpl.ExecuteTemplate(w, "index.html", data)
+}
+
+func (s *Server) handleCurrentPartial(w http.ResponseWriter, r *http.Request) {
+	data, err := s.getCurrentData()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.tmpl.ExecuteTemplate(w, "current.html", data)
+}
+
+type ChartData struct {
+	Labels []string    `json:"labels"`
+	Series []ChartSeries `json:"series"`
+}
+
+type ChartSeries struct {
+	Name  string    `json:"name"`
+	Data  []float64 `json:"data"`
+	Color string    `json:"color"`
+}
+
+func (s *Server) handleChartPartial(w http.ResponseWriter, r *http.Request) {
+	end := time.Now()
+	start := end.Add(-24 * time.Hour)
+
+	valleyObs, _ := s.store.GetObservations("IWANDI23", start, end)
+	midObs, _ := s.store.GetObservations("IWANDI8", start, end)
+	upperObs, _ := s.store.GetObservations("IVICTORI162", start, end)
+
+	chartData := ChartData{
+		Labels: make([]string, 0),
+		Series: []ChartSeries{
+			{Name: "Valley (117m)", Data: make([]float64, 0), Color: "#4fc3f7"},
+			{Name: "Mid-slope (364m)", Data: make([]float64, 0), Color: "#81c784"},
+			{Name: "Upper (400m)", Data: make([]float64, 0), Color: "#ffb74d"},
+		},
+	}
+
+	for _, obs := range valleyObs {
+		if obs.Temp.Valid {
+			chartData.Labels = append(chartData.Labels, obs.ObservedAt.Format("15:04"))
+			chartData.Series[0].Data = append(chartData.Series[0].Data, obs.Temp.Float64)
+		}
+	}
+	for _, obs := range midObs {
+		if obs.Temp.Valid {
+			chartData.Series[1].Data = append(chartData.Series[1].Data, obs.Temp.Float64)
+		}
+	}
+	for _, obs := range upperObs {
+		if obs.Temp.Valid {
+			chartData.Series[2].Data = append(chartData.Series[2].Data, obs.Temp.Float64)
+		}
+	}
+
+	s.tmpl.ExecuteTemplate(w, "chart.html", chartData)
+}
+
+func (s *Server) handleAPICurrent(w http.ResponseWriter, r *http.Request) {
+	data, err := s.getCurrentData()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
+}
+
+func (s *Server) handleAPIHistory(w http.ResponseWriter, r *http.Request) {
+	stationID := r.URL.Query().Get("station")
+	if stationID == "" {
+		stationID = "IWANDI23"
+	}
+
+	hours := 24
+	end := time.Now()
+	start := end.Add(-time.Duration(hours) * time.Hour)
+
+	observations, err := s.store.GetObservations(stationID, start, end)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(observations)
+}
+
+func (s *Server) handleAPIStations(w http.ResponseWriter, r *http.Request) {
+	stations, err := s.store.GetActiveStations()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stations)
+}
