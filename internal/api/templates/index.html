@@ -5,133 +5,182 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WandiWeather</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #1a1a2e;
+            background: #0f0f1a;
             color: #eee;
             min-height: 100vh;
             padding: 1rem;
         }
-        .container { max-width: 1000px; margin: 0 auto; }
-        h1 { font-size: 1.5rem; margin-bottom: 1rem; color: #4fc3f7; }
-        .grid { display: grid; gap: 1rem; }
-        @media (min-width: 700px) {
-            .grid { grid-template-columns: repeat(2, 1fr); }
-            .grid .wide { grid-column: span 2; }
+        .container { max-width: 480px; margin: 0 auto; }
+        
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
         }
-        .card {
-            background: #16213e;
-            border-radius: 12px;
-            padding: 1.5rem;
-            border: 1px solid #1f4068;
+        .location { font-size: 1.25rem; font-weight: 600; }
+        .time { font-size: 0.85rem; color: #666; }
+        
+        .hero {
+            text-align: center;
+            padding: 2rem 0 1rem;
         }
-        .card h2 { font-size: 0.9rem; color: #888; margin-bottom: 0.75rem; text-transform: uppercase; }
-        .card.hero { grid-column: span 2; }
-        @media (max-width: 700px) { .card.hero { grid-column: span 1; } }
-        .hero-main { display: flex; justify-content: space-between; align-items: flex-start; }
-        .hero-left h2 { margin-bottom: 0.25rem; }
-        .temp-big { font-size: 5rem; font-weight: 200; line-height: 1; }
-        .temp-unit { font-size: 2rem; color: #888; }
-        .feels-like { font-size: 0.9rem; color: #888; margin-top: 0.25rem; }
-        .today-observed { font-size: 0.9rem; color: #888; margin-top: 0.5rem; }
-        .hero-right { text-align: right; }
-        .today-label { font-size: 0.8rem; color: #888; text-transform: uppercase; }
-        .today-range { font-size: 1.5rem; margin: 0.25rem 0; }
-        .today-max { color: #ff7043; }
-        .today-min { color: #4fc3f7; margin-left: 0.5rem; }
-        .today-precip { font-size: 0.9rem; color: #4fc3f7; }
-        .conditions-row { 
-            display: flex; 
-            flex-wrap: wrap; 
-            gap: 1rem; 
-            margin-top: 1rem; 
-            padding-top: 1rem; 
-            border-top: 1px solid #1f4068; 
+        .temp-now {
+            font-size: 6rem;
+            font-weight: 200;
+            line-height: 1;
+            letter-spacing: -0.05em;
         }
-        .condition { font-size: 0.9rem; color: #aaa; }
-        .inversion { padding: 0.75rem; border-radius: 8px; margin-top: 1rem; font-size: 0.85rem; }
-        .inversion.active { background: #ff6b6b22; border: 1px solid #ff6b6b; }
-        .inversion.inactive { background: #4ecdc422; border: 1px solid #4ecdc4; }
-        .tier { margin-bottom: 1rem; }
-        .tier-label { font-size: 0.8rem; color: #4fc3f7; margin-bottom: 0.5rem; }
-        .tier-elev { color: #666; }
-        .stations { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-        .station {
-            background: #1f4068;
-            padding: 0.5rem 0.75rem;
-            border-radius: 8px;
+        .temp-now .unit { font-size: 2.5rem; color: #666; vertical-align: top; }
+        .conditions-inline {
+            display: flex;
+            justify-content: center;
+            gap: 1.5rem;
+            margin-top: 0.75rem;
             font-size: 0.9rem;
-            min-width: 90px;
+            color: #888;
         }
-        .station.primary { border: 1px solid #4fc3f7; }
-        .station-name { color: #888; font-size: 0.7rem; }
-        .chart-container { height: 300px; position: relative; }
-        .updated { font-size: 0.75rem; color: #666; margin-top: 1rem; }
-        .forecast-grid {
+        
+        .today-forecast {
+            background: #1a1a2e;
+            border-radius: 12px;
+            padding: 1.25rem;
+            margin-top: 1.5rem;
+        }
+        .forecast-header {
+            font-size: 0.75rem;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+        }
+        .forecast-narrative {
+            font-size: 1rem;
+            color: #ccc;
+            margin-bottom: 1rem;
+        }
+        .forecast-range {
+            display: flex;
+            justify-content: flex-start;
+            gap: 2rem;
+        }
+        .range-item { text-align: center; }
+        .range-value { font-size: 1.75rem; font-weight: 300; display: block; }
+        .range-value.high { color: #ff7043; }
+        .range-value.low { color: #4fc3f7; }
+        .range-value.rain { color: #4fc3f7; }
+        .range-label { font-size: 0.7rem; color: #666; text-transform: uppercase; }
+        .observed-progress {
+            margin-top: 1rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid #2a2a4e;
+            font-size: 0.85rem;
+            color: #666;
+        }
+        
+        .inversion {
+            margin-top: 1.5rem;
+            padding: 1rem;
+            border-radius: 10px;
+            font-size: 0.9rem;
+        }
+        .inversion.active {
+            background: linear-gradient(135deg, #ff6b6b22, #ff6b6b11);
+            border: 1px solid #ff6b6b44;
+        }
+        .inversion.normal {
+            background: linear-gradient(135deg, #4ecdc422, #4ecdc411);
+            border: 1px solid #4ecdc444;
+        }
+        .inversion-title { font-weight: 600; margin-bottom: 0.25rem; }
+        .inversion-detail { font-size: 0.8rem; color: #888; }
+        
+
+        
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 2rem;
+            margin-bottom: 0.75rem;
+        }
+        .section-title { font-size: 0.8rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
+        
+        .forecast-week {
             display: grid;
             grid-template-columns: repeat(7, 1fr);
             gap: 0.5rem;
-            margin-top: 1rem;
-        }
-        @media (max-width: 700px) {
-            .forecast-grid { grid-template-columns: repeat(4, 1fr); }
         }
         .forecast-day {
-            background: #1f4068;
-            border-radius: 8px;
-            padding: 0.75rem;
+            background: #1a1a2e;
+            border-radius: 10px;
+            padding: 0.75rem 0.5rem;
             text-align: center;
         }
-        .forecast-day.today {
-            border: 1px solid #4fc3f7;
+        .forecast-day.today { border: 1px solid #4fc3f7; }
+        .day-name { font-size: 0.75rem; color: #888; }
+        .day-temps { margin-top: 0.5rem; }
+        .day-high { font-size: 1.1rem; }
+        .day-low { font-size: 0.85rem; color: #666; }
+        .day-precip { font-size: 0.7rem; color: #4fc3f7; margin-top: 0.25rem; }
+        
+        .stations-toggle {
+            margin-top: 1.5rem;
+            text-align: center;
         }
-        .day-name { font-weight: 600; color: #4fc3f7; }
-        .day-date { font-size: 0.7rem; color: #888; margin-bottom: 0.5rem; }
-        .temp-max { font-size: 1.5rem; font-weight: 300; }
-        .temp-min { font-size: 1rem; color: #888; }
-        .precip { 
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            margin-top: 0.5rem;
-            padding: 0.25rem;
-            background: #4fc3f711;
-            border-radius: 4px;
+        .stations-toggle button {
+            background: none;
+            border: 1px solid #333;
+            color: #666;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            cursor: pointer;
         }
-        .precip-icon { font-size: 1rem; }
-        .precip-chance { font-size: 0.8rem; color: #4fc3f7; font-weight: 600; }
-        .precip-amount { font-size: 0.65rem; color: #888; }
-        .wind { font-size: 0.7rem; color: #888; margin-top: 0.25rem; }
-        .bom-temps { font-size: 0.7rem; color: #666; margin-top: 0.25rem; }
-        .verification-stats {
-            margin-top: 1rem;
-            display: flex;
+        .stations-toggle button:hover { border-color: #4fc3f7; color: #4fc3f7; }
+        
+        .stations-grid {
+            display: none;
             gap: 1rem;
-            flex-wrap: wrap;
+            margin-top: 1rem;
         }
-        .stat-badge {
-            font-size: 0.75rem;
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
+        .stations-grid.show { display: grid; grid-template-columns: repeat(3, 1fr); }
+        .tier { }
+        .tier-label { font-size: 0.7rem; color: #4fc3f7; margin-bottom: 0.5rem; }
+        .tier-stations { display: flex; flex-direction: column; gap: 0.25rem; }
+        .station-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            padding: 0.25rem 0;
         }
-        .stat-badge.wu { background: #4fc3f722; color: #4fc3f7; }
-        .stat-badge.bom { background: #ff6b6b22; color: #ff6b6b; }
+        .station-name { color: #888; }
+        .station-temp { }
+        
+        .updated { 
+            text-align: center; 
+            font-size: 0.75rem; 
+            color: #444; 
+            margin-top: 2rem; 
+            padding-top: 1rem;
+            border-top: 1px solid #1a1a2e;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🌡️ WandiWeather</h1>
-        <div class="grid">
-            <div id="current" hx-get="/partials/current" hx-trigger="load, every 60s" hx-swap="innerHTML">
-                Loading...
-            </div>
-            <div id="forecast-container" hx-get="/partials/forecast" hx-trigger="load, every 3600s" hx-swap="innerHTML">
-                Loading forecast...
-            </div>
+        <div id="current" hx-get="/partials/current" hx-trigger="load, every 60s" hx-swap="innerHTML">
+            Loading...
         </div>
     </div>
+    <script>
+        function toggleStations() {
+            document.getElementById('stations-grid').classList.toggle('show');
+        }
+    </script>
 </body>
 </html>

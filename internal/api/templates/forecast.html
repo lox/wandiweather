@@ -1,57 +1,27 @@
-<div class="card wide">
-    <h2>7-Day Forecast</h2>
-    <div class="forecast-grid">
-        {{range .Days}}
-        <div class="forecast-day{{if .IsToday}} today{{end}}">
-            <div class="day-name">{{.DayName}}</div>
-            <div class="day-date">{{.DateStr}}</div>
+<div class="section-header">
+    <span class="section-title">This Week</span>
+</div>
+<div class="forecast-week">
+    {{range .Days}}
+    <div class="forecast-day{{if .IsToday}} today{{end}}">
+        <div class="day-name">{{if .IsToday}}Today{{else}}{{.DayName}}{{end}}</div>
+        <div class="day-temps">
             {{if .WU}}
-            <div class="temp-max">{{if .WU.TempMax.Valid}}{{printf "%.0f" .WU.TempMax.Float64}}°{{else}}-{{end}}</div>
-            <div class="temp-min">{{if .WU.TempMin.Valid}}{{printf "%.0f" .WU.TempMin.Float64}}°{{else}}-{{end}}</div>
+            <div class="day-high">{{if .WU.TempMax.Valid}}{{printf "%.0f" .WU.TempMax.Float64}}°{{else}}—{{end}}</div>
+            <div class="day-low">{{if .WU.TempMin.Valid}}{{printf "%.0f" .WU.TempMin.Float64}}°{{else}}—{{end}}</div>
+            {{else if .BOM}}
+            <div class="day-high">{{if .BOM.TempMax.Valid}}{{printf "%.0f" .BOM.TempMax.Float64}}°{{else}}—{{end}}</div>
+            <div class="day-low">{{if .BOM.TempMin.Valid}}{{printf "%.0f" .BOM.TempMin.Float64}}°{{else}}—{{end}}</div>
             {{else}}
-            <div class="temp-max">-</div>
-            <div class="temp-min">-</div>
-            {{end}}
-            
-            {{/* Precipitation display - prefer WU, fallback to BOM */}}
-            {{if .WU}}{{if .WU.PrecipChance.Valid}}{{if gt .WU.PrecipChance.Int64 10}}
-            <div class="precip">
-                <span class="precip-icon">{{if gt .WU.PrecipChance.Int64 60}}🌧️{{else if gt .WU.PrecipChance.Int64 30}}🌦️{{else}}💧{{end}}</span>
-                <span class="precip-chance">{{.WU.PrecipChance.Int64}}%</span>
-                {{if .WU.PrecipAmount.Valid}}{{if gt .WU.PrecipAmount.Float64 0.5}}
-                <span class="precip-amount">{{printf "%.0f" .WU.PrecipAmount.Float64}}mm</span>
-                {{end}}{{end}}
-            </div>
-            {{end}}{{end}}{{else if .BOM}}{{if .BOM.PrecipChance.Valid}}{{if gt .BOM.PrecipChance.Int64 10}}
-            <div class="precip">
-                <span class="precip-icon">{{if gt .BOM.PrecipChance.Int64 60}}🌧️{{else if gt .BOM.PrecipChance.Int64 30}}🌦️{{else}}💧{{end}}</span>
-                <span class="precip-chance">{{.BOM.PrecipChance.Int64}}%</span>
-                {{if .BOM.PrecipRange.Valid}}
-                <span class="precip-amount">{{.BOM.PrecipRange.String}}</span>
-                {{end}}
-            </div>
-            {{end}}{{end}}{{end}}
-            
-            {{if .WU}}{{if .WU.WindSpeed.Valid}}
-            <div class="wind">💨 {{printf "%.0f" .WU.WindSpeed.Float64}}{{if .WU.WindDir.Valid}} {{.WU.WindDir.String}}{{end}}</div>
-            {{end}}{{end}}
-            
-            {{if .BOM}}
-            <div class="bom-temps">
-                BOM: {{if .BOM.TempMax.Valid}}{{printf "%.0f" .BOM.TempMax.Float64}}°{{end}}
-            </div>
+            <div class="day-high">—</div>
+            <div class="day-low">—</div>
             {{end}}
         </div>
-        {{end}}
-    </div>
-    {{if .HasStats}}
-    <div class="verification-stats">
-        {{if .WUStats}}
-        <span class="stat-badge wu">WU: {{if .WUStats.AvgMaxBias.Valid}}{{printf "%+.1f" .WUStats.AvgMaxBias.Float64}}°C bias{{else}}no data{{end}} ({{.WUStats.Count}} days)</span>
-        {{end}}
-        {{if .BOMStats}}
-        <span class="stat-badge bom">BOM: {{if .BOMStats.AvgMaxBias.Valid}}{{printf "%+.1f" .BOMStats.AvgMaxBias.Float64}}°C bias{{else}}no data{{end}} ({{.BOMStats.Count}} days)</span>
-        {{end}}
+        {{if .WU}}{{if .WU.PrecipChance.Valid}}{{if gt .WU.PrecipChance.Int64 10}}
+        <div class="day-precip">💧{{.WU.PrecipChance.Int64}}%</div>
+        {{end}}{{end}}{{else if .BOM}}{{if .BOM.PrecipChance.Valid}}{{if gt .BOM.PrecipChance.Int64 10}}
+        <div class="day-precip">💧{{.BOM.PrecipChance.Int64}}%</div>
+        {{end}}{{end}}{{end}}
     </div>
     {{end}}
 </div>

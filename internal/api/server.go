@@ -192,7 +192,9 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 	forecasts, err := s.store.GetLatestForecasts()
 	if err == nil {
 		for _, fc := range forecasts["wu"] {
-			if fc.ValidDate.Equal(todayDate) {
+			fcDate := fc.ValidDate.Format("2006-01-02")
+			todayStr := todayDate.Format("2006-01-02")
+			if fcDate == todayStr {
 				tf := &TodayForecast{}
 				if fc.TempMax.Valid {
 					tf.TempMax = fc.TempMax.Float64
@@ -249,7 +251,9 @@ func (s *Server) handleCurrentPartial(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.tmpl.ExecuteTemplate(w, "current.html", data)
+	if err := s.tmpl.ExecuteTemplate(w, "current.html", data); err != nil {
+		log.Printf("template error: %v", err)
+	}
 }
 
 type ChartData struct {
