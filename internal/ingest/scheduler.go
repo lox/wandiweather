@@ -27,7 +27,7 @@ func NewScheduler(store *store.Store, pws *PWS, forecast *ForecastClient, bom *B
 		bom:         bom,
 		daily:       NewDailyJobs(store),
 		stationIDs:  stationIDs,
-		obsInterval: 5 * time.Minute,
+		obsInterval: 1 * time.Minute,
 		fcInterval:  6 * time.Hour,
 	}
 }

@@ -212,7 +212,7 @@ func (s *Store) GetStationsByTier(tier string) ([]models.Station, error) {
 }
 
 func (s *Store) GetObservationDates(stationID string) ([]time.Time, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT DATE(observed_at) as date FROM observations WHERE station_id = ? ORDER BY date ASC`, stationID)
+	rows, err := s.db.Query(`SELECT DISTINCT DATE(SUBSTR(observed_at, 1, 10)) as date FROM observations WHERE station_id = ? ORDER BY date ASC`, stationID)
 	if err != nil {
 		return nil, err
 	}

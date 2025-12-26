@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/lox/wandiweather/internal/api"
 	"github.com/lox/wandiweather/internal/ingest"
@@ -59,7 +59,7 @@ func main() {
 		log.Fatal("PWS_API_KEY environment variable required")
 	}
 
-	db, err := sql.Open("sqlite3", *dbPath)
+	db, err := sql.Open("sqlite", *dbPath)
 	if err != nil {
 		log.Fatalf("open database: %v", err)
 	}
