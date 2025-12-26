@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/lox/wandiweather/internal/models"
 )
 
@@ -56,20 +57,33 @@ type CurrentObservation struct {
 func (p *PWS) FetchCurrent(stationID string) (*models.Observation, string, error) {
 	url := fmt.Sprintf("https://api.weather.com/v2/pws/observations/current?stationId=%s&format=json&units=m&apiKey=%s", stationID, p.apiKey)
 
-	resp, err := p.client.Get(url)
-	if err != nil {
-		return nil, "", fmt.Errorf("fetch current: %w", err)
-	}
-	defer resp.Body.Close()
+	var body []byte
+	operation := func() error {
+		resp, err := p.client.Get(url)
+		if err != nil {
+			return backoff.Permanent(fmt.Errorf("fetch current: %w", err))
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, "", fmt.Errorf("fetch current: status %d: %s", resp.StatusCode, string(body))
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("rate limited: status %d", resp.StatusCode)
+		}
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			return backoff.Permanent(fmt.Errorf("fetch current: status %d: %s", resp.StatusCode, string(b)))
+		}
+
+		body, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return backoff.Permanent(fmt.Errorf("read body: %w", err))
+		}
+		return nil
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, "", fmt.Errorf("read body: %w", err)
+	bo := backoff.NewExponentialBackOff()
+	bo.MaxElapsedTime = 2 * time.Minute
+	if err := backoff.Retry(operation, bo); err != nil {
+		return nil, "", err
 	}
 
 	var data CurrentResponse
@@ -195,20 +209,33 @@ func (p *PWS) FetchHistory7Day(stationID string) ([]models.Observation, error) {
 func (p *PWS) fetchHistory(stationID, endpoint string) ([]models.Observation, error) {
 	url := fmt.Sprintf("https://api.weather.com/v2/pws/observations/%s?stationId=%s&format=json&units=m&apiKey=%s", endpoint, stationID, p.apiKey)
 
-	resp, err := p.client.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("fetch history: %w", err)
-	}
-	defer resp.Body.Close()
+	var body []byte
+	operation := func() error {
+		resp, err := p.client.Get(url)
+		if err != nil {
+			return backoff.Permanent(fmt.Errorf("fetch history: %w", err))
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("fetch history: status %d: %s", resp.StatusCode, string(body))
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("rate limited: status %d", resp.StatusCode)
+		}
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			return backoff.Permanent(fmt.Errorf("fetch history: status %d: %s", resp.StatusCode, string(b)))
+		}
+
+		body, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return backoff.Permanent(fmt.Errorf("read body: %w", err))
+		}
+		return nil
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
+	bo := backoff.NewExponentialBackOff()
+	bo.MaxElapsedTime = 2 * time.Minute
+	if err := backoff.Retry(operation, bo); err != nil {
+		return nil, err
 	}
 
 	var data HistoryResponse
