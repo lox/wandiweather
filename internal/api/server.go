@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/lox/wandiweather/internal/models"
@@ -63,6 +64,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 type CurrentData struct {
 	Primary       *models.Observation
+	ValleyTemp    float64
 	Stations      map[string]*models.Observation
 	StationMeta   map[string]models.Station
 	ValleyFloor   []StationReading
@@ -153,19 +155,23 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 		}
 	}
 
-	if len(valleyTemps) > 0 && len(upperTemps) > 0 {
-		valleyAvg := avg(valleyTemps)
-		midAvg := avg(midTemps)
-		upperAvg := avg(upperTemps)
-		expectedDiff := (400.0 - 117.0) / 1000.0 * 6.5
-		actualDiff := upperAvg - valleyAvg
+	if len(valleyTemps) > 0 {
+		data.ValleyTemp = median(valleyTemps)
+		
+		if len(upperTemps) > 0 {
+			valleyAvg := avg(valleyTemps)
+			midAvg := avg(midTemps)
+			upperAvg := avg(upperTemps)
+			expectedDiff := (400.0 - 117.0) / 1000.0 * 6.5
+			actualDiff := upperAvg - valleyAvg
 
-		data.Inversion = &InversionStatus{
-			Active:    actualDiff > expectedDiff+2,
-			Strength:  actualDiff - expectedDiff,
-			ValleyAvg: valleyAvg,
-			MidAvg:    midAvg,
-			UpperAvg:  upperAvg,
+			data.Inversion = &InversionStatus{
+				Active:    actualDiff > expectedDiff+2,
+				Strength:  actualDiff - expectedDiff,
+				ValleyAvg: valleyAvg,
+				MidAvg:    midAvg,
+				UpperAvg:  upperAvg,
+			}
 		}
 	}
 
@@ -230,6 +236,20 @@ func avg(vals []float64) float64 {
 		sum += v
 	}
 	return sum / float64(len(vals))
+}
+
+func median(vals []float64) float64 {
+	if len(vals) == 0 {
+		return 0
+	}
+	sorted := make([]float64, len(vals))
+	copy(sorted, vals)
+	sort.Float64s(sorted)
+	n := len(sorted)
+	if n%2 == 0 {
+		return (sorted[n/2-1] + sorted[n/2]) / 2
+	}
+	return sorted[n/2]
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {

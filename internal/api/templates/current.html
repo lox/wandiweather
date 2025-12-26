@@ -5,13 +5,15 @@
 
 <!-- NOW: Current conditions -->
 <div class="hero">
+    {{if gt .ValleyTemp 0.0}}
+    <div class="temp-now">{{printf "%.0f" .ValleyTemp}}<span class="unit">°</span></div>
     {{if .Primary}}
-    <div class="temp-now">{{printf "%.0f" .Primary.Temp.Float64}}<span class="unit">°</span></div>
     <div class="conditions-inline">
-        {{if .Primary.Humidity.Valid}}<span>💧 {{.Primary.Humidity.Int64}}%</span>{{end}}
+        {{if .Primary.Humidity.Valid}}<span>{{.Primary.Humidity.Int64}}% humidity</span>{{end}}
         {{if .Primary.WindSpeed.Valid}}<span>💨 {{printf "%.0f" .Primary.WindSpeed.Float64}} km/h</span>{{end}}
         {{if .Primary.UV.Valid}}{{if gt .Primary.UV.Float64 0.0}}<span>☀️ UV {{printf "%.0f" .Primary.UV.Float64}}</span>{{end}}{{end}}
     </div>
+    {{end}}
     {{else}}
     <div class="temp-now">—<span class="unit">°</span></div>
     {{end}}
