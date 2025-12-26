@@ -136,7 +136,7 @@ func (b *BOMClient) FetchForecasts() ([]models.Forecast, string, error) {
 					fc.TempMin = sql.NullFloat64{Float64: v, Valid: true}
 				}
 			case "precipitation_range":
-				// BOM gives ranges like "0 to 1 mm", we could parse this later
+				fc.PrecipRange = sql.NullString{String: elem.Value, Valid: elem.Value != ""}
 			}
 		}
 

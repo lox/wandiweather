@@ -107,10 +107,10 @@ func (s *Store) InsertForecast(f models.Forecast) error {
 		source = "wu"
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO forecasts (source, fetched_at, valid_date, day_of_forecast, temp_max, temp_min, humidity, precip_chance, precip_amount, wind_speed, wind_dir, narrative, raw_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO forecasts (source, fetched_at, valid_date, day_of_forecast, temp_max, temp_min, humidity, precip_chance, precip_amount, precip_range, wind_speed, wind_dir, narrative, raw_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source, fetched_at, valid_date) DO NOTHING
-	`, source, f.FetchedAt, f.ValidDate, f.DayOfForecast, f.TempMax, f.TempMin, f.Humidity, f.PrecipChance, f.PrecipAmount, f.WindSpeed, f.WindDir, f.Narrative, f.RawJSON)
+	`, source, f.FetchedAt, f.ValidDate, f.DayOfForecast, f.TempMax, f.TempMin, f.Humidity, f.PrecipChance, f.PrecipAmount, f.PrecipRange, f.WindSpeed, f.WindDir, f.Narrative, f.RawJSON)
 	return err
 }
 
@@ -322,6 +322,18 @@ func (s *Store) GetPrimaryStation() (*models.Station, error) {
 	return &st, nil
 }
 
+func (s *Store) GetTodayStats(stationID string, localDate time.Time) (minTemp, maxTemp, rainTotal sql.NullFloat64, err error) {
+	startUTC := time.Date(localDate.Year(), localDate.Month(), localDate.Day(), 0, 0, 0, 0, time.UTC).Add(-11 * time.Hour)
+	endUTC := time.Now().UTC()
+
+	err = s.db.QueryRow(`
+		SELECT MIN(temp), MAX(temp), MAX(precip_total)
+		FROM observations
+		WHERE station_id = ? AND observed_at >= ? AND observed_at <= ? AND temp IS NOT NULL
+	`, stationID, startUTC, endUTC).Scan(&minTemp, &maxTemp, &rainTotal)
+	return
+}
+
 func (s *Store) GetLatestForecasts() (map[string][]models.Forecast, error) {
 	rows, err := s.db.Query(`
 		WITH latest AS (
@@ -330,7 +342,8 @@ func (s *Store) GetLatestForecasts() (map[string][]models.Forecast, error) {
 			GROUP BY source
 		)
 		SELECT f.id, f.source, f.fetched_at, f.valid_date, f.day_of_forecast, 
-		       f.temp_max, f.temp_min, f.precip_chance, f.narrative
+		       f.temp_max, f.temp_min, f.precip_chance, f.precip_amount, f.precip_range, 
+		       f.wind_speed, f.wind_dir, f.narrative
 		FROM forecasts f
 		JOIN latest l ON f.source = l.source AND f.fetched_at = l.max_fetched
 		WHERE f.valid_date >= DATE('now')
@@ -345,7 +358,8 @@ func (s *Store) GetLatestForecasts() (map[string][]models.Forecast, error) {
 	for rows.Next() {
 		var f models.Forecast
 		if err := rows.Scan(&f.ID, &f.Source, &f.FetchedAt, &f.ValidDate, &f.DayOfForecast,
-			&f.TempMax, &f.TempMin, &f.PrecipChance, &f.Narrative); err != nil {
+			&f.TempMax, &f.TempMin, &f.PrecipChance, &f.PrecipAmount, &f.PrecipRange,
+			&f.WindSpeed, &f.WindDir, &f.Narrative); err != nil {
 			return nil, err
 		}
 		result[f.Source] = append(result[f.Source], f)

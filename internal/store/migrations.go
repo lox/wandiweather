@@ -137,6 +137,13 @@ ALTER TABLE forecasts_new RENAME TO forecasts;
 CREATE INDEX IF NOT EXISTS idx_forecasts_valid ON forecasts(valid_date);
 `,
 	},
+	{
+		Version:     3,
+		Description: "Add precip_range column for BOM precipitation ranges",
+		SQL: `
+ALTER TABLE forecasts ADD COLUMN precip_range TEXT;
+`,
+	},
 }
 
 func (s *Store) Migrate() error {

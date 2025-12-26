@@ -78,6 +78,11 @@ func (f *ForecastClient) Fetch7Day() ([]models.Forecast, string, error) {
 	fetchedAt := time.Now().UTC()
 	var forecasts []models.Forecast
 
+	var daypart *Daypart
+	if len(data.Daypart) > 0 {
+		daypart = &data.Daypart[0]
+	}
+
 	for i := range data.ValidTimeLocal {
 		validTime, err := time.Parse("2006-01-02T15:04:05-0700", data.ValidTimeLocal[i])
 		if err != nil {
@@ -101,6 +106,51 @@ func (f *ForecastClient) Fetch7Day() ([]models.Forecast, string, error) {
 		}
 		if i < len(data.Narrative) {
 			fc.Narrative = sql.NullString{String: data.Narrative[i], Valid: true}
+		}
+
+		if daypart != nil {
+			dayIdx := i * 2
+			nightIdx := i*2 + 1
+
+			var totalQPF float64
+			var maxPrecipChance int
+			var hasQPF, hasPrecip bool
+
+			if dayIdx < len(daypart.QPF) && daypart.QPF[dayIdx] != nil {
+				totalQPF += *daypart.QPF[dayIdx]
+				hasQPF = true
+			}
+			if nightIdx < len(daypart.QPF) && daypart.QPF[nightIdx] != nil {
+				totalQPF += *daypart.QPF[nightIdx]
+				hasQPF = true
+			}
+			if dayIdx < len(daypart.PrecipChance) && daypart.PrecipChance[dayIdx] != nil {
+				if *daypart.PrecipChance[dayIdx] > maxPrecipChance {
+					maxPrecipChance = *daypart.PrecipChance[dayIdx]
+				}
+				hasPrecip = true
+			}
+			if nightIdx < len(daypart.PrecipChance) && daypart.PrecipChance[nightIdx] != nil {
+				if *daypart.PrecipChance[nightIdx] > maxPrecipChance {
+					maxPrecipChance = *daypart.PrecipChance[nightIdx]
+				}
+				hasPrecip = true
+			}
+
+			if hasQPF {
+				fc.PrecipAmount = sql.NullFloat64{Float64: totalQPF, Valid: true}
+			}
+			if hasPrecip {
+				fc.PrecipChance = sql.NullInt64{Int64: int64(maxPrecipChance), Valid: true}
+			}
+
+			// Get daytime wind (use day index, skip night)
+			if dayIdx < len(daypart.WindSpeed) && daypart.WindSpeed[dayIdx] != nil {
+				fc.WindSpeed = sql.NullFloat64{Float64: float64(*daypart.WindSpeed[dayIdx]), Valid: true}
+			}
+			if dayIdx < len(daypart.WindDirectionCard) && daypart.WindDirectionCard[dayIdx] != nil {
+				fc.WindDir = sql.NullString{String: *daypart.WindDirectionCard[dayIdx], Valid: true}
+			}
 		}
 
 		forecasts = append(forecasts, fc)

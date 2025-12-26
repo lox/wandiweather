@@ -29,13 +29,30 @@
             border: 1px solid #1f4068;
         }
         .card h2 { font-size: 0.9rem; color: #888; margin-bottom: 0.75rem; text-transform: uppercase; }
-        .temp-big { font-size: 4rem; font-weight: 300; }
-        .temp-unit { font-size: 1.5rem; color: #888; }
-        .stats { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem; }
-        .stat { flex: 1; min-width: 80px; }
-        .stat-label { font-size: 0.75rem; color: #888; }
-        .stat-value { font-size: 1.25rem; }
-        .inversion { padding: 0.75rem; border-radius: 8px; margin-top: 1rem; font-size: 0.9rem; }
+        .card.hero { grid-column: span 2; }
+        @media (max-width: 700px) { .card.hero { grid-column: span 1; } }
+        .hero-main { display: flex; justify-content: space-between; align-items: flex-start; }
+        .hero-left h2 { margin-bottom: 0.25rem; }
+        .temp-big { font-size: 5rem; font-weight: 200; line-height: 1; }
+        .temp-unit { font-size: 2rem; color: #888; }
+        .feels-like { font-size: 0.9rem; color: #888; margin-top: 0.25rem; }
+        .today-observed { font-size: 0.9rem; color: #888; margin-top: 0.5rem; }
+        .hero-right { text-align: right; }
+        .today-label { font-size: 0.8rem; color: #888; text-transform: uppercase; }
+        .today-range { font-size: 1.5rem; margin: 0.25rem 0; }
+        .today-max { color: #ff7043; }
+        .today-min { color: #4fc3f7; margin-left: 0.5rem; }
+        .today-precip { font-size: 0.9rem; color: #4fc3f7; }
+        .conditions-row { 
+            display: flex; 
+            flex-wrap: wrap; 
+            gap: 1rem; 
+            margin-top: 1rem; 
+            padding-top: 1rem; 
+            border-top: 1px solid #1f4068; 
+        }
+        .condition { font-size: 0.9rem; color: #aaa; }
+        .inversion { padding: 0.75rem; border-radius: 8px; margin-top: 1rem; font-size: 0.85rem; }
         .inversion.active { background: #ff6b6b22; border: 1px solid #ff6b6b; }
         .inversion.inactive { background: #4ecdc422; border: 1px solid #4ecdc4; }
         .tier { margin-bottom: 1rem; }
@@ -75,8 +92,20 @@
         .day-date { font-size: 0.7rem; color: #888; margin-bottom: 0.5rem; }
         .temp-max { font-size: 1.5rem; font-weight: 300; }
         .temp-min { font-size: 1rem; color: #888; }
-        .precip { font-size: 0.75rem; color: #4fc3f7; margin-top: 0.25rem; }
-        .bom-temps { font-size: 0.7rem; color: #666; margin-top: 0.5rem; }
+        .precip { 
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 0.5rem;
+            padding: 0.25rem;
+            background: #4fc3f711;
+            border-radius: 4px;
+        }
+        .precip-icon { font-size: 1rem; }
+        .precip-chance { font-size: 0.8rem; color: #4fc3f7; font-weight: 600; }
+        .precip-amount { font-size: 0.65rem; color: #888; }
+        .wind { font-size: 0.7rem; color: #888; margin-top: 0.25rem; }
+        .bom-temps { font-size: 0.7rem; color: #666; margin-top: 0.25rem; }
         .verification-stats {
             margin-top: 1rem;
             display: flex;
@@ -98,9 +127,6 @@
         <div class="grid">
             <div id="current" hx-get="/partials/current" hx-trigger="load, every 60s" hx-swap="innerHTML">
                 Loading...
-            </div>
-            <div class="card wide" id="chart-container" hx-get="/partials/chart" hx-trigger="load, every 300s" hx-swap="innerHTML">
-                Loading chart...
             </div>
             <div id="forecast-container" hx-get="/partials/forecast" hx-trigger="load, every 3600s" hx-swap="innerHTML">
                 Loading forecast...

@@ -1,86 +1,40 @@
-<div class="card">
-    <h2>Wandiligong</h2>
+<div class="card hero">
+    <div class="hero-main">
+        <div class="hero-left">
+            <h2>Wandiligong</h2>
+            {{if .Primary}}
+            <div class="temp-big">{{printf "%.0f" .Primary.Temp.Float64}}<span class="temp-unit">°C</span></div>
+            {{if .TodayStats}}
+            <div class="today-observed">
+                Low {{printf "%.0f" .TodayStats.MinTemp}}° · High {{printf "%.0f" .TodayStats.MaxTemp}}°
+            </div>
+            {{end}}
+            {{else}}
+            <div class="temp-big">—</div>
+            {{end}}
+        </div>
+        <div class="hero-right">
+            {{if .TodayForecast}}
+            <div class="today-label">Forecast</div>
+            <div class="today-range">
+                <span class="today-max">↑ {{printf "%.0f" .TodayForecast.TempMax}}°</span>
+                <span class="today-min">↓ {{printf "%.0f" .TodayForecast.TempMin}}°</span>
+            </div>
+            {{if .TodayForecast.HasPrecip}}
+            <div class="today-precip">💧 {{.TodayForecast.PrecipChance}}%{{if gt .TodayForecast.PrecipAmount 0.5}} · {{printf "%.0f" .TodayForecast.PrecipAmount}}mm{{end}}</div>
+            {{end}}
+            {{end}}
+        </div>
+    </div>
+    
     {{if .Primary}}
-    <div class="temp-big">{{printf "%.1f" .Primary.Temp.Float64}}<span class="temp-unit">°C</span></div>
-    <div class="stats">
-        {{if .Primary.Humidity.Valid}}
-        <div class="stat">
-            <div class="stat-label">Humidity</div>
-            <div class="stat-value">{{.Primary.Humidity.Int64}}%</div>
-        </div>
-        {{end}}
-        {{if .Primary.Pressure.Valid}}
-        <div class="stat">
-            <div class="stat-label">Pressure</div>
-            <div class="stat-value">{{printf "%.0f" .Primary.Pressure.Float64}} hPa</div>
-        </div>
-        {{end}}
-        {{if .Primary.WindSpeed.Valid}}
-        <div class="stat">
-            <div class="stat-label">Wind</div>
-            <div class="stat-value">{{printf "%.0f" .Primary.WindSpeed.Float64}} km/h</div>
-        </div>
-        {{end}}
-        {{if .Primary.Dewpoint.Valid}}
-        <div class="stat">
-            <div class="stat-label">Dewpoint</div>
-            <div class="stat-value">{{printf "%.1f" .Primary.Dewpoint.Float64}}°C</div>
-        </div>
-        {{end}}
-    </div>
-    {{else}}
-    <div>No data available</div>
-    {{end}}
-    
-    {{if .Inversion}}
-    <div class="inversion {{if .Inversion.Active}}active{{else}}inactive{{end}}">
-        {{if .Inversion.Active}}
-        ⚠️ <strong>Inversion Active</strong> — Upper slopes {{printf "%.1f" .Inversion.Strength}}°C warmer than expected
-        {{else}}
-        ✓ Normal gradient — Valley {{printf "%.1f" .Inversion.ValleyAvg}}°C → Mid {{printf "%.1f" .Inversion.MidAvg}}°C → Upper {{printf "%.1f" .Inversion.UpperAvg}}°C
-        {{end}}
+    <div class="conditions-row">
+        {{if .Primary.Humidity.Valid}}<div class="condition">💧 {{.Primary.Humidity.Int64}}%</div>{{end}}
+        {{if .Primary.WindSpeed.Valid}}<div class="condition">💨 {{printf "%.0f" .Primary.WindSpeed.Float64}} km/h</div>{{end}}
+        {{if .Primary.UV.Valid}}{{if gt .Primary.UV.Float64 0}}<div class="condition">☀️ UV {{printf "%.0f" .Primary.UV.Float64}}</div>{{end}}{{end}}
+        {{if .TodayStats}}{{if .TodayStats.HasRain}}<div class="condition">🌧️ {{printf "%.1f" .TodayStats.RainTotal}}mm today</div>{{end}}{{end}}
     </div>
     {{end}}
-</div>
-
-<div class="card">
-    <h2>By Elevation</h2>
     
-    <div class="tier">
-        <div class="tier-label">Valley Floor <span class="tier-elev">(96-161m)</span></div>
-        <div class="stations">
-            {{range .ValleyFloor}}
-            <div class="station {{if .Station.IsPrimary}}primary{{end}}">
-                <div class="station-name">{{.Station.StationID}}</div>
-                {{if .Obs}}{{if .Obs.Temp.Valid}}{{printf "%.1f" .Obs.Temp.Float64}}°C{{else}}—{{end}}{{else}}—{{end}}
-            </div>
-            {{end}}
-        </div>
-    </div>
-    
-    <div class="tier">
-        <div class="tier-label">Mid-Slope <span class="tier-elev">(316-367m)</span></div>
-        <div class="stations">
-            {{range .MidSlope}}
-            <div class="station">
-                <div class="station-name">{{.Station.StationID}}</div>
-                {{if .Obs}}{{if .Obs.Temp.Valid}}{{printf "%.1f" .Obs.Temp.Float64}}°C{{else}}—{{end}}{{else}}—{{end}}
-            </div>
-            {{end}}
-        </div>
-    </div>
-    
-    <div class="tier">
-        <div class="tier-label">Upper <span class="tier-elev">(400m)</span></div>
-        <div class="stations">
-            {{range .Upper}}
-            <div class="station">
-                <div class="station-name">{{.Station.StationID}}</div>
-                {{if .Obs}}{{if .Obs.Temp.Valid}}{{printf "%.1f" .Obs.Temp.Float64}}°C{{else}}—{{end}}{{else}}—{{end}}
-            </div>
-            {{end}}
-        </div>
-    </div>
-    
-    <div class="updated">Updated: {{.LastUpdated.Format "15:04:05"}}</div>
+    <div class="updated">{{.LastUpdated.Format "3:04 PM"}}</div>
 </div>

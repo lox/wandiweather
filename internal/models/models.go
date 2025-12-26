@@ -49,6 +49,7 @@ type Forecast struct {
 	Humidity      sql.NullInt64
 	PrecipChance  sql.NullInt64
 	PrecipAmount  sql.NullFloat64
+	PrecipRange   sql.NullString // BOM format: "1 to 5 mm"
 	WindSpeed     sql.NullFloat64
 	WindDir       sql.NullString
 	Narrative     sql.NullString

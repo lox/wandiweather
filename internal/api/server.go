@@ -62,14 +62,32 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 type CurrentData struct {
-	Primary      *models.Observation
-	Stations     map[string]*models.Observation
-	StationMeta  map[string]models.Station
-	ValleyFloor  []StationReading
-	MidSlope     []StationReading
-	Upper        []StationReading
-	Inversion    *InversionStatus
-	LastUpdated  time.Time
+	Primary       *models.Observation
+	Stations      map[string]*models.Observation
+	StationMeta   map[string]models.Station
+	ValleyFloor   []StationReading
+	MidSlope      []StationReading
+	Upper         []StationReading
+	Inversion     *InversionStatus
+	TodayForecast *TodayForecast
+	TodayStats    *TodayStats
+	LastUpdated   time.Time
+}
+
+type TodayForecast struct {
+	TempMax      float64
+	TempMin      float64
+	PrecipChance int64
+	PrecipAmount float64
+	Narrative    string
+	HasPrecip    bool
+}
+
+type TodayStats struct {
+	MinTemp   float64
+	MaxTemp   float64
+	RainTotal float64
+	HasRain   bool
 }
 
 type StationReading struct {
@@ -148,6 +166,53 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 			ValleyAvg: valleyAvg,
 			MidAvg:    midAvg,
 			UpperAvg:  upperAvg,
+		}
+	}
+
+	loc, _ := time.LoadLocation("Australia/Melbourne")
+	today := time.Now().In(loc)
+	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+
+	minTemp, maxTemp, rainTotal, err := s.store.GetTodayStats("IWANDI23", today)
+	if err == nil {
+		ts := &TodayStats{}
+		if minTemp.Valid {
+			ts.MinTemp = minTemp.Float64
+		}
+		if maxTemp.Valid {
+			ts.MaxTemp = maxTemp.Float64
+		}
+		if rainTotal.Valid && rainTotal.Float64 > 0 {
+			ts.RainTotal = rainTotal.Float64
+			ts.HasRain = true
+		}
+		data.TodayStats = ts
+	}
+
+	forecasts, err := s.store.GetLatestForecasts()
+	if err == nil {
+		for _, fc := range forecasts["wu"] {
+			if fc.ValidDate.Equal(todayDate) {
+				tf := &TodayForecast{}
+				if fc.TempMax.Valid {
+					tf.TempMax = fc.TempMax.Float64
+				}
+				if fc.TempMin.Valid {
+					tf.TempMin = fc.TempMin.Float64
+				}
+				if fc.PrecipChance.Valid {
+					tf.PrecipChance = fc.PrecipChance.Int64
+					tf.HasPrecip = fc.PrecipChance.Int64 > 10
+				}
+				if fc.PrecipAmount.Valid {
+					tf.PrecipAmount = fc.PrecipAmount.Float64
+				}
+				if fc.Narrative.Valid {
+					tf.Narrative = fc.Narrative.String
+				}
+				data.TodayForecast = tf
+				break
+			}
 		}
 	}
 

@@ -8,15 +8,34 @@
             {{if .WU}}
             <div class="temp-max">{{if .WU.TempMax.Valid}}{{printf "%.0f" .WU.TempMax.Float64}}°{{else}}-{{end}}</div>
             <div class="temp-min">{{if .WU.TempMin.Valid}}{{printf "%.0f" .WU.TempMin.Float64}}°{{else}}-{{end}}</div>
-            {{if .WU.PrecipChance.Valid}}{{if gt .WU.PrecipChance.Int64 10}}
-            <div class="precip">💧{{.WU.PrecipChance.Int64}}%</div>
-            {{end}}{{else if .BOM}}{{if .BOM.PrecipChance.Valid}}{{if gt .BOM.PrecipChance.Int64 10}}
-            <div class="precip">💧{{.BOM.PrecipChance.Int64}}%</div>
-            {{end}}{{end}}{{end}}
             {{else}}
             <div class="temp-max">-</div>
             <div class="temp-min">-</div>
             {{end}}
+            
+            {{/* Precipitation display - prefer WU, fallback to BOM */}}
+            {{if .WU}}{{if .WU.PrecipChance.Valid}}{{if gt .WU.PrecipChance.Int64 10}}
+            <div class="precip">
+                <span class="precip-icon">{{if gt .WU.PrecipChance.Int64 60}}🌧️{{else if gt .WU.PrecipChance.Int64 30}}🌦️{{else}}💧{{end}}</span>
+                <span class="precip-chance">{{.WU.PrecipChance.Int64}}%</span>
+                {{if .WU.PrecipAmount.Valid}}{{if gt .WU.PrecipAmount.Float64 0.5}}
+                <span class="precip-amount">{{printf "%.0f" .WU.PrecipAmount.Float64}}mm</span>
+                {{end}}{{end}}
+            </div>
+            {{end}}{{end}}{{else if .BOM}}{{if .BOM.PrecipChance.Valid}}{{if gt .BOM.PrecipChance.Int64 10}}
+            <div class="precip">
+                <span class="precip-icon">{{if gt .BOM.PrecipChance.Int64 60}}🌧️{{else if gt .BOM.PrecipChance.Int64 30}}🌦️{{else}}💧{{end}}</span>
+                <span class="precip-chance">{{.BOM.PrecipChance.Int64}}%</span>
+                {{if .BOM.PrecipRange.Valid}}
+                <span class="precip-amount">{{.BOM.PrecipRange.String}}</span>
+                {{end}}
+            </div>
+            {{end}}{{end}}{{end}}
+            
+            {{if .WU}}{{if .WU.WindSpeed.Valid}}
+            <div class="wind">💨 {{printf "%.0f" .WU.WindSpeed.Float64}}{{if .WU.WindDir.Valid}} {{.WU.WindDir.String}}{{end}}</div>
+            {{end}}{{end}}
+            
             {{if .BOM}}
             <div class="bom-temps">
                 BOM: {{if .BOM.TempMax.Valid}}{{printf "%.0f" .BOM.TempMax.Float64}}°{{end}}
