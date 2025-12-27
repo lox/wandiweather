@@ -112,27 +112,6 @@ func (s *Scheduler) IngestOnce() error {
 	return nil
 }
 
-func (s *Scheduler) BackfillHistory() error {
-	log.Println("scheduler: backfilling 1-day history (5-min intervals)")
-	for _, stationID := range s.stationIDs {
-		observations, err := s.pws.FetchHistory1Day(stationID)
-		if err != nil {
-			log.Printf("scheduler: backfill %s: %v", stationID, err)
-			continue
-		}
-		inserted := 0
-		for _, obs := range observations {
-			if err := s.store.InsertObservation(obs); err != nil {
-				log.Printf("scheduler: insert %s: %v", stationID, err)
-				continue
-			}
-			inserted++
-		}
-		log.Printf("scheduler: backfilled %s: %d observations", stationID, inserted)
-	}
-	return nil
-}
-
 func (s *Scheduler) BackfillHistory7Day() error {
 	log.Println("scheduler: backfilling 7-day history (hourly)")
 	for _, stationID := range s.stationIDs {

@@ -41,8 +41,7 @@ func main() {
 	port := flag.String("port", "8080", "HTTP server port")
 	noPoll := flag.Bool("no-poll", false, "disable polling (server only, for local dev)")
 	once := flag.Bool("once", false, "ingest once and exit (for testing)")
-	backfill := flag.Bool("backfill", false, "backfill 1-day history on startup")
-	backfill7d := flag.Bool("backfill7d", false, "backfill 7-day hourly history")
+	backfill := flag.Bool("backfill", false, "backfill 7-day observation history")
 	dailyJobs := flag.Bool("daily", false, "run daily jobs (summaries + verification) and exit")
 	backfillDaily := flag.Bool("backfill-daily", false, "backfill all daily summaries and verification")
 	flag.Parse()
@@ -78,16 +77,9 @@ func main() {
 	forecast := ingest.NewForecastClient(apiKey, wandiligongLat, wandiligongLon)
 	scheduler := ingest.NewScheduler(st, pws, forecast, stationIDs)
 
-	if *backfill7d {
-		log.Println("backfilling 7-day history")
-		if err := scheduler.BackfillHistory7Day(); err != nil {
-			log.Fatalf("backfill7d: %v", err)
-		}
-	}
-
 	if *backfill {
-		log.Println("backfilling 1-day history")
-		if err := scheduler.BackfillHistory(); err != nil {
+		log.Println("backfilling 7-day observation history")
+		if err := scheduler.BackfillHistory7Day(); err != nil {
 			log.Fatalf("backfill: %v", err)
 		}
 	}

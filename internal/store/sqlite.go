@@ -283,23 +283,41 @@ func (s *Store) GetForecastsForDate(validDate time.Time) ([]models.Forecast, err
 	return forecasts, rows.Err()
 }
 
-func (s *Store) GetActualsForDate(stationID string, date time.Time) (tempMax, tempMin sql.NullFloat64, err error) {
+type DayActuals struct {
+	TempMax   sql.NullFloat64
+	TempMin   sql.NullFloat64
+	WindGust  sql.NullFloat64
+	PrecipSum sql.NullFloat64
+}
+
+func (s *Store) GetActualsForDate(stationID string, date time.Time) (*DayActuals, error) {
 	startUTC := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC).Add(-11 * time.Hour)
 	endUTC := startUTC.Add(24 * time.Hour)
 
-	err = s.db.QueryRow(`
-		SELECT MAX(temp), MIN(temp)
+	var a DayActuals
+	err := s.db.QueryRow(`
+		SELECT MAX(temp), MIN(temp), MAX(wind_gust), MAX(precip_total)
 		FROM observations
 		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND temp IS NOT NULL
-	`, stationID, startUTC, endUTC).Scan(&tempMax, &tempMin)
-	return
+	`, stationID, startUTC, endUTC).Scan(&a.TempMax, &a.TempMin, &a.WindGust, &a.PrecipSum)
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
 }
 
 func (s *Store) InsertForecastVerification(v models.ForecastVerification) error {
 	_, err := s.db.Exec(`
-		INSERT INTO forecast_verification (forecast_id, valid_date, forecast_temp_max, forecast_temp_min, actual_temp_max, actual_temp_min, bias_temp_max, bias_temp_min)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, v.ForecastID, v.ValidDate, v.ForecastTempMax, v.ForecastTempMin, v.ActualTempMax, v.ActualTempMin, v.BiasTempMax, v.BiasTempMin)
+		INSERT INTO forecast_verification (
+			forecast_id, valid_date, 
+			forecast_temp_max, forecast_temp_min, actual_temp_max, actual_temp_min, bias_temp_max, bias_temp_min,
+			forecast_wind_speed, actual_wind_gust, bias_wind,
+			forecast_precip, actual_precip, bias_precip
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, v.ForecastID, v.ValidDate,
+		v.ForecastTempMax, v.ForecastTempMin, v.ActualTempMax, v.ActualTempMin, v.BiasTempMax, v.BiasTempMin,
+		v.ForecastWindSpeed, v.ActualWindGust, v.BiasWind,
+		v.ForecastPrecip, v.ActualPrecip, v.BiasPrecip)
 	return err
 }
 
@@ -375,7 +393,11 @@ func (s *Store) GetVerificationStats() (map[string]models.VerificationStats, err
 			AVG(v.bias_temp_max) as avg_max_bias,
 			AVG(v.bias_temp_min) as avg_min_bias,
 			AVG(ABS(v.bias_temp_max)) as mae_max,
-			AVG(ABS(v.bias_temp_min)) as mae_min
+			AVG(ABS(v.bias_temp_min)) as mae_min,
+			AVG(v.bias_wind) as avg_wind_bias,
+			AVG(ABS(v.bias_wind)) as mae_wind,
+			AVG(v.bias_precip) as avg_precip_bias,
+			AVG(ABS(v.bias_precip)) as mae_precip
 		FROM forecast_verification v
 		JOIN forecasts f ON v.forecast_id = f.id
 		WHERE v.bias_temp_max IS NOT NULL
@@ -391,7 +413,8 @@ func (s *Store) GetVerificationStats() (map[string]models.VerificationStats, err
 		var source string
 		var stats models.VerificationStats
 		if err := rows.Scan(&source, &stats.Count, &stats.AvgMaxBias, &stats.AvgMinBias,
-			&stats.MAEMax, &stats.MAEMin); err != nil {
+			&stats.MAEMax, &stats.MAEMin, &stats.AvgWindBias, &stats.MAEWind,
+			&stats.AvgPrecipBias, &stats.MAEPrecip); err != nil {
 			return nil, err
 		}
 		result[source] = stats

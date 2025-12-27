@@ -133,6 +133,22 @@
             </div>
             <div class="stat-count">Based on {{.Stats.Count}} days of data</div>
         </div>
+        
+        <div class="section-title">Wind & Precipitation</div>
+        <div class="stats-card">
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-value {{if le .Stats.MAEWind.Float64 5.0}}good{{else}}warn{{end}}">±{{printf "%.0f" .Stats.MAEWind.Float64}}</div>
+                    <div class="stat-label">Wind error (km/h)</div>
+                    <div class="stat-sublabel">avg {{printf "%+.0f" .Stats.AvgWindBias.Float64}} bias</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value {{if le .Stats.MAEPrecip.Float64 2.0}}good{{else}}warn{{end}}">±{{printf "%.1f" .Stats.MAEPrecip.Float64}}</div>
+                    <div class="stat-label">Precip error (mm)</div>
+                    <div class="stat-sublabel">avg {{printf "%+.1f" .Stats.AvgPrecipBias.Float64}} bias</div>
+                </div>
+            </div>
+        </div>
         {{else}}
         <div class="stats-card">
             <p style="color: #666; text-align: center;">Not enough data yet. Check back after a few days of verification.</p>

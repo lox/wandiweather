@@ -162,6 +162,18 @@ UPDATE stations SET elevation = 313, elevation_tier = 'local' WHERE station_id =
 UPDATE stations SET elevation = 392, elevation_tier = 'local' WHERE station_id = 'IVICTORI162';
 `,
 	},
+	{
+		Version:     6,
+		Description: "Add wind and precip to forecast verification",
+		SQL: `
+ALTER TABLE forecast_verification ADD COLUMN forecast_wind_speed REAL;
+ALTER TABLE forecast_verification ADD COLUMN actual_wind_gust REAL;
+ALTER TABLE forecast_verification ADD COLUMN bias_wind REAL;
+ALTER TABLE forecast_verification ADD COLUMN forecast_precip REAL;
+ALTER TABLE forecast_verification ADD COLUMN actual_precip REAL;
+ALTER TABLE forecast_verification ADD COLUMN bias_precip REAL;
+`,
+	},
 }
 
 func (s *Store) Migrate() error {

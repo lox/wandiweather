@@ -101,11 +101,11 @@ func (d *DailyJobs) VerifyForecasts(forDate time.Time) error {
 		return nil
 	}
 
-	actualMax, actualMin, err := d.store.GetActualsForDate(primary.StationID, forDate)
+	actuals, err := d.store.GetActualsForDate(primary.StationID, forDate)
 	if err != nil {
 		return err
 	}
-	if !actualMax.Valid || !actualMin.Valid {
+	if !actuals.TempMax.Valid || !actuals.TempMin.Valid {
 		log.Printf("daily: no actuals for %s on %s", primary.StationID, forDate.Format("2006-01-02"))
 		return nil
 	}
@@ -124,23 +124,39 @@ func (d *DailyJobs) VerifyForecasts(forDate time.Time) error {
 		seen[fc.Source] = true
 
 		v := models.ForecastVerification{
-			ForecastID:    fc.ID,
-			ValidDate:     forDate,
-			ActualTempMax: actualMax,
-			ActualTempMin: actualMin,
+			ForecastID:     fc.ID,
+			ValidDate:      forDate,
+			ActualTempMax:  actuals.TempMax,
+			ActualTempMin:  actuals.TempMin,
+			ActualWindGust: actuals.WindGust,
+			ActualPrecip:   actuals.PrecipSum,
 		}
 
 		if fc.TempMax.Valid {
 			v.ForecastTempMax = fc.TempMax
 			v.BiasTempMax = sql.NullFloat64{
-				Float64: fc.TempMax.Float64 - actualMax.Float64,
+				Float64: fc.TempMax.Float64 - actuals.TempMax.Float64,
 				Valid:   true,
 			}
 		}
 		if fc.TempMin.Valid {
 			v.ForecastTempMin = fc.TempMin
 			v.BiasTempMin = sql.NullFloat64{
-				Float64: fc.TempMin.Float64 - actualMin.Float64,
+				Float64: fc.TempMin.Float64 - actuals.TempMin.Float64,
+				Valid:   true,
+			}
+		}
+		if fc.WindSpeed.Valid && actuals.WindGust.Valid {
+			v.ForecastWindSpeed = fc.WindSpeed
+			v.BiasWind = sql.NullFloat64{
+				Float64: fc.WindSpeed.Float64 - actuals.WindGust.Float64,
+				Valid:   true,
+			}
+		}
+		if fc.PrecipAmount.Valid && actuals.PrecipSum.Valid {
+			v.ForecastPrecip = fc.PrecipAmount
+			v.BiasPrecip = sql.NullFloat64{
+				Float64: fc.PrecipAmount.Float64 - actuals.PrecipSum.Float64,
 				Valid:   true,
 			}
 		}
@@ -150,9 +166,10 @@ func (d *DailyJobs) VerifyForecasts(forDate time.Time) error {
 			continue
 		}
 
-		log.Printf("daily: verified %s forecast for %s: max bias=%.1f°C, min bias=%.1f°C",
+		log.Printf("daily: verified %s forecast for %s: temp bias=%.1f/%.1f°C, wind bias=%.1f km/h, precip bias=%.1fmm",
 			fc.Source, forDate.Format("2006-01-02"),
-			v.BiasTempMax.Float64, v.BiasTempMin.Float64)
+			v.BiasTempMax.Float64, v.BiasTempMin.Float64,
+			v.BiasWind.Float64, v.BiasPrecip.Float64)
 		verified++
 	}
 

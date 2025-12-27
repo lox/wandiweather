@@ -73,22 +73,32 @@ type DailySummary struct {
 }
 
 type ForecastVerification struct {
-	ID              int64
-	ForecastID      int64
-	ValidDate       time.Time
-	ForecastTempMax sql.NullFloat64
-	ForecastTempMin sql.NullFloat64
-	ActualTempMax   sql.NullFloat64
-	ActualTempMin   sql.NullFloat64
-	BiasTempMax     sql.NullFloat64
-	BiasTempMin     sql.NullFloat64
-	CreatedAt       time.Time
+	ID                int64
+	ForecastID        int64
+	ValidDate         time.Time
+	ForecastTempMax   sql.NullFloat64
+	ForecastTempMin   sql.NullFloat64
+	ActualTempMax     sql.NullFloat64
+	ActualTempMin     sql.NullFloat64
+	BiasTempMax       sql.NullFloat64
+	BiasTempMin       sql.NullFloat64
+	ForecastWindSpeed sql.NullFloat64
+	ActualWindGust    sql.NullFloat64
+	BiasWind          sql.NullFloat64
+	ForecastPrecip    sql.NullFloat64
+	ActualPrecip      sql.NullFloat64
+	BiasPrecip        sql.NullFloat64
+	CreatedAt         time.Time
 }
 
 type VerificationStats struct {
-	Count      int
-	AvgMaxBias sql.NullFloat64
-	AvgMinBias sql.NullFloat64
-	MAEMax     sql.NullFloat64
-	MAEMin     sql.NullFloat64
+	Count        int
+	AvgMaxBias   sql.NullFloat64
+	AvgMinBias   sql.NullFloat64
+	MAEMax       sql.NullFloat64
+	MAEMin       sql.NullFloat64
+	AvgWindBias  sql.NullFloat64
+	MAEWind      sql.NullFloat64
+	AvgPrecipBias sql.NullFloat64
+	MAEPrecip    sql.NullFloat64
 }
