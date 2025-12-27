@@ -153,6 +153,11 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 			if obs.Temp.Valid {
 				upperTemps = append(upperTemps, obs.Temp.Float64)
 			}
+		case "local":
+			data.ValleyFloor = append(data.ValleyFloor, reading)
+			if obs.Temp.Valid {
+				valleyTemps = append(valleyTemps, obs.Temp.Float64)
+			}
 		}
 	}
 
