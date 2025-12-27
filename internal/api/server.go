@@ -37,6 +37,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/accuracy", s.handleAccuracy)
+	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/partials/current", s.handleCurrentPartial)
 	mux.HandleFunc("/partials/chart", s.handleChartPartial)
 	mux.HandleFunc("/partials/forecast", s.handleForecastPartial)
@@ -521,4 +522,67 @@ func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.tmpl.ExecuteTemplate(w, "accuracy.html", data)
+}
+
+type HealthStatus struct {
+	Status   string         `json:"status"`
+	Stations []StationHealth `json:"stations"`
+	Errors   []string       `json:"errors,omitempty"`
+}
+
+type StationHealth struct {
+	StationID   string    `json:"station_id"`
+	LastSeen    time.Time `json:"last_seen"`
+	AgeMinutes  int       `json:"age_minutes"`
+	Stale       bool      `json:"stale"`
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	stations, err := s.store.GetActiveStations()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+		return
+	}
+
+	health := HealthStatus{
+		Status:   "ok",
+		Stations: make([]StationHealth, 0, len(stations)),
+	}
+
+	staleThreshold := 15 * time.Minute
+	now := time.Now()
+
+	for _, st := range stations {
+		obs, err := s.store.GetLatestObservation(st.StationID)
+		if err != nil {
+			health.Errors = append(health.Errors, st.StationID+": "+err.Error())
+			continue
+		}
+
+		sh := StationHealth{StationID: st.StationID}
+		if obs != nil {
+			sh.LastSeen = obs.ObservedAt
+			sh.AgeMinutes = int(now.Sub(obs.ObservedAt).Minutes())
+			sh.Stale = now.Sub(obs.ObservedAt) > staleThreshold
+		} else {
+			sh.Stale = true
+			sh.AgeMinutes = -1
+		}
+
+		if sh.Stale {
+			health.Status = "degraded"
+		}
+		health.Stations = append(health.Stations, sh)
+	}
+
+	if len(health.Errors) > 0 {
+		health.Status = "error"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if health.Status != "ok" {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	json.NewEncoder(w).Encode(health)
 }
