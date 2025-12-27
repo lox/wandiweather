@@ -36,6 +36,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", s.handleIndex)
+	mux.HandleFunc("/accuracy", s.handleAccuracy)
 	mux.HandleFunc("/partials/current", s.handleCurrentPartial)
 	mux.HandleFunc("/partials/chart", s.handleChartPartial)
 	mux.HandleFunc("/partials/forecast", s.handleForecastPartial)
@@ -464,4 +465,55 @@ func (s *Server) handleAPIForecast(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(data)
+}
+
+type AccuracyData struct {
+	Stats   *models.VerificationStats
+	History []VerificationRow
+}
+
+type VerificationRow struct {
+	models.ForecastVerification
+	MaxBiasClass string
+}
+
+func biasClass(bias float64) string {
+	abs := bias
+	if abs < 0 {
+		abs = -abs
+	}
+	if abs <= 1 {
+		return "good"
+	}
+	if abs <= 3 {
+		return "ok"
+	}
+	return "bad"
+}
+
+func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.store.GetVerificationStats()
+	if err != nil {
+		log.Printf("get verification stats: %v", err)
+	}
+
+	data := &AccuracyData{}
+
+	if wuStats, ok := stats["wu"]; ok {
+		data.Stats = &wuStats
+	}
+
+	history, err := s.store.GetVerificationHistory("wu", 14)
+	if err != nil {
+		log.Printf("get history: %v", err)
+	}
+	for _, v := range history {
+		row := VerificationRow{ForecastVerification: v}
+		if v.BiasTempMax.Valid {
+			row.MaxBiasClass = biasClass(v.BiasTempMax.Float64)
+		}
+		data.History = append(data.History, row)
+	}
+
+	s.tmpl.ExecuteTemplate(w, "accuracy.html", data)
 }

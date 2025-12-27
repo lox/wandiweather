@@ -398,3 +398,30 @@ func (s *Store) GetVerificationStats() (map[string]models.VerificationStats, err
 	}
 	return result, rows.Err()
 }
+
+func (s *Store) GetVerificationHistory(source string, limit int) ([]models.ForecastVerification, error) {
+	rows, err := s.db.Query(`
+		SELECT v.id, v.forecast_id, v.valid_date, v.forecast_temp_max, v.forecast_temp_min,
+		       v.actual_temp_max, v.actual_temp_min, v.bias_temp_max, v.bias_temp_min, v.created_at
+		FROM forecast_verification v
+		JOIN forecasts f ON v.forecast_id = f.id
+		WHERE f.source = ? AND v.bias_temp_max IS NOT NULL
+		ORDER BY v.valid_date DESC
+		LIMIT ?
+	`, source, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []models.ForecastVerification
+	for rows.Next() {
+		var v models.ForecastVerification
+		if err := rows.Scan(&v.ID, &v.ForecastID, &v.ValidDate, &v.ForecastTempMax, &v.ForecastTempMin,
+			&v.ActualTempMax, &v.ActualTempMin, &v.BiasTempMax, &v.BiasTempMin, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		results = append(results, v)
+	}
+	return results, rows.Err()
+}

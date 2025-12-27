@@ -9,9 +9,6 @@
             {{if .WU}}
             <div class="day-high">{{if .WU.TempMax.Valid}}{{printf "%.0f" .WU.TempMax.Float64}}°{{else}}—{{end}}</div>
             <div class="day-low">{{if .WU.TempMin.Valid}}{{printf "%.0f" .WU.TempMin.Float64}}°{{else}}—{{end}}</div>
-            {{else if .BOM}}
-            <div class="day-high">{{if .BOM.TempMax.Valid}}{{printf "%.0f" .BOM.TempMax.Float64}}°{{else}}—{{end}}</div>
-            <div class="day-low">{{if .BOM.TempMin.Valid}}{{printf "%.0f" .BOM.TempMin.Float64}}°{{else}}—{{end}}</div>
             {{else}}
             <div class="day-high">—</div>
             <div class="day-low">—</div>
@@ -19,8 +16,6 @@
         </div>
         {{if .WU}}{{if .WU.PrecipChance.Valid}}{{if gt .WU.PrecipChance.Int64 10}}
         <div class="day-precip">💧{{.WU.PrecipChance.Int64}}%</div>
-        {{end}}{{end}}{{else if .BOM}}{{if .BOM.PrecipChance.Valid}}{{if gt .BOM.PrecipChance.Int64 10}}
-        <div class="day-precip">💧{{.BOM.PrecipChance.Int64}}%</div>
         {{end}}{{end}}{{end}}
     </div>
     {{end}}

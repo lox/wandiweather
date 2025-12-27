@@ -144,6 +144,24 @@ CREATE INDEX IF NOT EXISTS idx_forecasts_valid ON forecasts(valid_date);
 ALTER TABLE forecasts ADD COLUMN precip_range TEXT;
 `,
 	},
+	{
+		Version:     4,
+		Description: "Reduce active stations to core set",
+		SQL: `
+UPDATE stations SET active = 0 
+WHERE station_id NOT IN ('IWANDI23', 'IWANDI25', 'IBRIGH180', 'IVICTORI162');
+`,
+	},
+	{
+		Version:     5,
+		Description: "Fix station elevations from Open-Elevation API",
+		SQL: `
+UPDATE stations SET elevation = 386, elevation_tier = 'local' WHERE station_id = 'IWANDI23';
+UPDATE stations SET elevation = 386, elevation_tier = 'local' WHERE station_id = 'IWANDI25';
+UPDATE stations SET elevation = 313, elevation_tier = 'local' WHERE station_id = 'IBRIGH180';
+UPDATE stations SET elevation = 392, elevation_tier = 'local' WHERE station_id = 'IVICTORI162';
+`,
+	},
 }
 
 func (s *Store) Migrate() error {

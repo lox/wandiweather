@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Forecast Accuracy - WandiWeather</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f1a;
+            color: #eee;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+        .container { max-width: 600px; margin: 0 auto; }
+        
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+        h1 { font-size: 1.25rem; font-weight: 600; }
+        .back { color: #4fc3f7; text-decoration: none; font-size: 0.9rem; }
+        .back:hover { text-decoration: underline; }
+        
+        .intro {
+            background: #1a1a2e;
+            border-radius: 12px;
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+        .intro p { color: #aaa; font-size: 0.9rem; line-height: 1.5; }
+        
+        .section-title {
+            font-size: 0.8rem;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.75rem;
+            margin-top: 1.5rem;
+        }
+        
+        .stats-card {
+            background: #1a1a2e;
+            border-radius: 10px;
+            padding: 1rem;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+        }
+        .stat-box { text-align: center; }
+        .stat-value { font-size: 2rem; font-weight: 300; }
+        .stat-value.good { color: #4ecdc4; }
+        .stat-value.warn { color: #ffd93d; }
+        .stat-label { font-size: 0.75rem; color: #666; margin-top: 0.25rem; }
+        .stat-sublabel { font-size: 0.7rem; color: #555; }
+        .stat-count { font-size: 0.75rem; color: #555; margin-top: 1rem; text-align: center; }
+        
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+        .history-table th {
+            text-align: left;
+            color: #666;
+            font-weight: 500;
+            padding: 0.5rem;
+            border-bottom: 1px solid #2a2a4e;
+        }
+        .history-table td {
+            padding: 0.5rem;
+            border-bottom: 1px solid #1a1a2e;
+        }
+        .history-table .date { color: #888; }
+        .history-table .actual { color: #eee; }
+        .history-table .forecast { color: #888; }
+        .history-table .bias { font-weight: 500; }
+        .history-table .bias.good { color: #4ecdc4; }
+        .history-table .bias.ok { color: #ffd93d; }
+        .history-table .bias.bad { color: #ff7043; }
+        
+        .table-wrap {
+            background: #1a1a2e;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .footer {
+            text-align: center;
+            font-size: 0.75rem;
+            color: #444;
+            margin-top: 2rem;
+            padding-top: 1rem;
+            border-top: 1px solid #1a1a2e;
+        }
+        .footer a { color: #4fc3f7; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Forecast Accuracy</h1>
+            <a href="/" class="back">← Back</a>
+        </header>
+        
+        <div class="intro">
+            <p>
+                We compare Weather Underground forecasts against actual observations 
+                from local weather stations in the Wandiligong valley. This helps track 
+                how well the forecasts perform for our specific microclimate.
+            </p>
+        </div>
+        
+        {{if .Stats}}
+        <div class="section-title">Temperature Accuracy</div>
+        <div class="stats-card">
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-value {{if le .Stats.MAEMax.Float64 2.0}}good{{else}}warn{{end}}">±{{printf "%.1f" .Stats.MAEMax.Float64}}°</div>
+                    <div class="stat-label">Max temp error</div>
+                    <div class="stat-sublabel">avg {{printf "%+.1f" .Stats.AvgMaxBias.Float64}}° bias</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value {{if le .Stats.MAEMin.Float64 2.0}}good{{else}}warn{{end}}">±{{printf "%.1f" .Stats.MAEMin.Float64}}°</div>
+                    <div class="stat-label">Min temp error</div>
+                    <div class="stat-sublabel">avg {{printf "%+.1f" .Stats.AvgMinBias.Float64}}° bias</div>
+                </div>
+            </div>
+            <div class="stat-count">Based on {{.Stats.Count}} days of data</div>
+        </div>
+        {{else}}
+        <div class="stats-card">
+            <p style="color: #666; text-align: center;">Not enough data yet. Check back after a few days of verification.</p>
+        </div>
+        {{end}}
+        
+        {{if .History}}
+        <div class="section-title">Daily Verification</div>
+        <div class="table-wrap">
+            <table class="history-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Forecast</th>
+                        <th>Actual</th>
+                        <th>Error</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .History}}
+                    <tr>
+                        <td class="date">{{.ValidDate.Format "Jan 2"}}</td>
+                        <td class="forecast">{{if .ForecastTempMax.Valid}}{{printf "%.0f" .ForecastTempMax.Float64}}°{{end}} / {{if .ForecastTempMin.Valid}}{{printf "%.0f" .ForecastTempMin.Float64}}°{{end}}</td>
+                        <td class="actual">{{if .ActualTempMax.Valid}}{{printf "%.0f" .ActualTempMax.Float64}}°{{end}} / {{if .ActualTempMin.Valid}}{{printf "%.0f" .ActualTempMin.Float64}}°{{end}}</td>
+                        <td class="bias {{.MaxBiasClass}}">{{if .BiasTempMax.Valid}}{{printf "%+.0f" .BiasTempMax.Float64}}°{{end}}</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{end}}
+        
+        <div class="footer">
+            <a href="/">WandiWeather</a> · Verification since Dec 2024
+        </div>
+    </div>
+</body>
+</html>

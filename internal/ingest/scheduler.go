@@ -12,19 +12,17 @@ type Scheduler struct {
 	store       *store.Store
 	pws         *PWS
 	forecast    *ForecastClient
-	bom         *BOMClient
 	daily       *DailyJobs
 	stationIDs  []string
 	obsInterval time.Duration
 	fcInterval  time.Duration
 }
 
-func NewScheduler(store *store.Store, pws *PWS, forecast *ForecastClient, bom *BOMClient, stationIDs []string) *Scheduler {
+func NewScheduler(store *store.Store, pws *PWS, forecast *ForecastClient, stationIDs []string) *Scheduler {
 	return &Scheduler{
 		store:       store,
 		pws:         pws,
 		forecast:    forecast,
-		bom:         bom,
 		daily:       NewDailyJobs(store),
 		stationIDs:  stationIDs,
 		obsInterval: 5 * time.Minute,
@@ -71,37 +69,22 @@ func (s *Scheduler) runDailyJobsIfNeeded() {
 }
 
 func (s *Scheduler) ingestForecasts() {
-	if s.forecast != nil {
-		log.Println("scheduler: ingesting WU forecasts")
-		forecasts, _, err := s.forecast.Fetch7Day()
-		if err != nil {
-			log.Printf("scheduler: fetch WU forecast: %v", err)
-		} else {
-			for _, fc := range forecasts {
-				if err := s.store.InsertForecast(fc); err != nil {
-					log.Printf("scheduler: insert WU forecast: %v", err)
-					continue
-				}
-			}
-			log.Printf("scheduler: inserted %d WU forecast days", len(forecasts))
+	if s.forecast == nil {
+		return
+	}
+	log.Println("scheduler: ingesting forecasts")
+	forecasts, _, err := s.forecast.Fetch7Day()
+	if err != nil {
+		log.Printf("scheduler: fetch forecast: %v", err)
+		return
+	}
+	for _, fc := range forecasts {
+		if err := s.store.InsertForecast(fc); err != nil {
+			log.Printf("scheduler: insert forecast: %v", err)
+			continue
 		}
 	}
-
-	if s.bom != nil {
-		log.Println("scheduler: ingesting BOM forecasts")
-		forecasts, _, err := s.bom.FetchForecasts()
-		if err != nil {
-			log.Printf("scheduler: fetch BOM forecast: %v", err)
-		} else {
-			for _, fc := range forecasts {
-				if err := s.store.InsertForecast(fc); err != nil {
-					log.Printf("scheduler: insert BOM forecast: %v", err)
-					continue
-				}
-			}
-			log.Printf("scheduler: inserted %d BOM forecast days", len(forecasts))
-		}
-	}
+	log.Printf("scheduler: inserted %d forecast days", len(forecasts))
 }
 
 func (s *Scheduler) ingestObservations() {

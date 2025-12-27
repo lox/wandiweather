@@ -18,25 +18,17 @@ import (
 )
 
 var defaultStations = []models.Station{
-	// Valley floor (96-161m)
-	{StationID: "IWANDI23", Name: "Wandiligong (Primary)", Latitude: -36.794, Longitude: 146.977, Elevation: 117, ElevationTier: "valley_floor", IsPrimary: true, Active: true},
-	{StationID: "IWANDI24", Name: "Wandiligong", Latitude: -36.786, Longitude: 146.992, Elevation: 161, ElevationTier: "valley_floor", IsPrimary: false, Active: true},
-	{StationID: "IBRIGH169", Name: "Bright", Latitude: -36.731, Longitude: 146.985, Elevation: 101, ElevationTier: "valley_floor", IsPrimary: false, Active: true},
-	{StationID: "IBRIGH180", Name: "Bright", Latitude: -36.729, Longitude: 146.968, Elevation: 96, ElevationTier: "valley_floor", IsPrimary: false, Active: true},
-	// Mid-slope (316-367m)
-	{StationID: "IWANDI8", Name: "Wandiligong", Latitude: -36.779, Longitude: 146.977, Elevation: 364, ElevationTier: "mid_slope", IsPrimary: false, Active: false}, // Rain gauge broken
-	{StationID: "IWANDI10", Name: "Wandiligong", Latitude: -36.767, Longitude: 146.981, Elevation: 355, ElevationTier: "mid_slope", IsPrimary: false, Active: true},
-	{StationID: "IWANDI22", Name: "Wandiligong", Latitude: -36.767, Longitude: 146.982, Elevation: 367, ElevationTier: "mid_slope", IsPrimary: false, Active: true},
-	{StationID: "IBRIGH55", Name: "Bright", Latitude: -36.742, Longitude: 146.973, Elevation: 336, ElevationTier: "mid_slope", IsPrimary: false, Active: true},
-	{StationID: "IBRIGH127", Name: "Bright", Latitude: -36.732, Longitude: 146.973, Elevation: 316, ElevationTier: "mid_slope", IsPrimary: false, Active: true},
-	// Upper (400m)
-	{StationID: "IVICTORI162", Name: "Wandiligong Upper", Latitude: -36.757, Longitude: 146.986, Elevation: 400, ElevationTier: "upper", IsPrimary: false, Active: true},
+	{StationID: "IWANDI23", Name: "Wandiligong (Primary)", Latitude: -36.794, Longitude: 146.977, Elevation: 386, ElevationTier: "local", IsPrimary: true, Active: true},
+	{StationID: "IWANDI25", Name: "Wandiligong (Shade)", Latitude: -36.794, Longitude: 146.977, Elevation: 386, ElevationTier: "local", IsPrimary: false, Active: true},
+	{StationID: "IBRIGH180", Name: "Bright", Latitude: -36.729, Longitude: 146.968, Elevation: 313, ElevationTier: "local", IsPrimary: false, Active: true},
+	{StationID: "IVICTORI162", Name: "Wandiligong", Latitude: -36.757, Longitude: 146.986, Elevation: 392, ElevationTier: "local", IsPrimary: false, Active: true},
 }
 
 var stationIDs = []string{
-	"IWANDI23", "IWANDI24", "IBRIGH169", "IBRIGH180",
-	"IWANDI10", "IWANDI22", "IBRIGH55", "IBRIGH127",
-	"IVICTORI162",
+	"IWANDI23",    // Primary station
+	"IWANDI25",    // Shade reference
+	"IVICTORI162", // Upper (inversion detection)
+	"IBRIGH180",   // Bright comparison
 }
 
 const (
@@ -47,6 +39,7 @@ const (
 func main() {
 	dbPath := flag.String("db", "data/wandiweather.db", "path to SQLite database")
 	port := flag.String("port", "8080", "HTTP server port")
+	noPoll := flag.Bool("no-poll", false, "disable polling (server only, for local dev)")
 	once := flag.Bool("once", false, "ingest once and exit (for testing)")
 	backfill := flag.Bool("backfill", false, "backfill 1-day history on startup")
 	backfill7d := flag.Bool("backfill7d", false, "backfill 7-day hourly history")
@@ -83,8 +76,7 @@ func main() {
 
 	pws := ingest.NewPWS(apiKey)
 	forecast := ingest.NewForecastClient(apiKey, wandiligongLat, wandiligongLon)
-	bom := ingest.NewBOMClient("")
-	scheduler := ingest.NewScheduler(st, pws, forecast, bom, stationIDs)
+	scheduler := ingest.NewScheduler(st, pws, forecast, stationIDs)
 
 	if *backfill7d {
 		log.Println("backfilling 7-day history")
@@ -133,7 +125,11 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	go scheduler.Run(ctx)
+	if !*noPoll {
+		go scheduler.Run(ctx)
+	} else {
+		log.Println("polling disabled (--no-poll)")
+	}
 
 	server := api.NewServer(st, *port)
 	log.Printf("starting server on :%s", *port)
