@@ -207,17 +207,28 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 
 	forecasts, err := s.store.GetLatestForecasts()
 	if err == nil {
+		correctionStats, _ := s.store.GetAllCorrectionStats()
+
 		for _, fc := range forecasts["wu"] {
 			fcDate := fc.ValidDate.Format("2006-01-02")
 			todayStr := todayDate.Format("2006-01-02")
 			if fcDate == todayStr {
 				tf := &TodayForecast{}
+
+				// Apply bias correction to temps
 				if fc.TempMax.Valid {
 					tf.TempMax = fc.TempMax.Float64
+					if bias := getCorrectionBias(correctionStats, "wu", "tmax", fc.DayOfForecast); bias != 0 {
+						tf.TempMax = fc.TempMax.Float64 - bias
+					}
 				}
 				if fc.TempMin.Valid {
 					tf.TempMin = fc.TempMin.Float64
+					if bias := getCorrectionBias(correctionStats, "wu", "tmin", fc.DayOfForecast); bias != 0 {
+						tf.TempMin = fc.TempMin.Float64 - bias
+					}
 				}
+
 				if fc.PrecipChance.Valid {
 					tf.PrecipChance = fc.PrecipChance.Int64
 					tf.HasPrecip = fc.PrecipChance.Int64 > 10
@@ -225,9 +236,26 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 				if fc.PrecipAmount.Valid {
 					tf.PrecipAmount = fc.PrecipAmount.Float64
 				}
-				if fc.Narrative.Valid {
-					tf.Narrative = fc.Narrative.String
+
+				// Build a ForecastDay to generate narrative with corrected temps
+				var bomForecast *models.Forecast
+				for _, bfc := range forecasts["bom"] {
+					if bfc.ValidDate.Format("2006-01-02") == todayStr {
+						b := bfc
+						bomForecast = &b
+						break
+					}
 				}
+				wuFc := fc
+				day := &ForecastDay{WU: &wuFc, BOM: bomForecast}
+				if fc.TempMax.Valid {
+					day.WUCorrectedMax = &tf.TempMax
+				}
+				if fc.TempMin.Valid {
+					day.WUCorrectedMin = &tf.TempMin
+				}
+				tf.Narrative = buildGeneratedNarrative(day)
+
 				data.TodayForecast = tf
 				break
 			}
