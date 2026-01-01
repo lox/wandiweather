@@ -215,18 +215,20 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 			if fcDate == todayStr {
 				tf := &TodayForecast{}
 
-				// Apply bias correction to temps
+				// Apply bias correction to temps and round to match narrative
 				if fc.TempMax.Valid {
 					tf.TempMax = fc.TempMax.Float64
 					if bias := getCorrectionBias(correctionStats, "wu", "tmax", fc.DayOfForecast); bias != 0 {
 						tf.TempMax = fc.TempMax.Float64 - bias
 					}
+					tf.TempMax = math.Round(tf.TempMax)
 				}
 				if fc.TempMin.Valid {
 					tf.TempMin = fc.TempMin.Float64
 					if bias := getCorrectionBias(correctionStats, "wu", "tmin", fc.DayOfForecast); bias != 0 {
 						tf.TempMin = fc.TempMin.Float64 - bias
 					}
+					tf.TempMin = math.Round(tf.TempMin)
 				}
 
 				if fc.PrecipChance.Valid {
