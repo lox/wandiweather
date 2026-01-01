@@ -212,7 +212,7 @@ func (s *Store) GetStationsByTier(tier string) ([]models.Station, error) {
 }
 
 func (s *Store) GetObservationDates(stationID string) ([]time.Time, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT DATE(SUBSTR(observed_at, 1, 10)) as date FROM observations WHERE station_id = ? ORDER BY date ASC`, stationID)
+	rows, err := s.db.Query(`SELECT DISTINCT SUBSTR(observed_at, 1, 10) as date FROM observations WHERE station_id = ? ORDER BY date ASC`, stationID)
 	if err != nil {
 		return nil, err
 	}
@@ -355,6 +355,7 @@ func (s *Store) GetTodayStats(stationID string, localDate time.Time) (minTemp, m
 }
 
 func (s *Store) GetLatestForecasts() (map[string][]models.Forecast, error) {
+	today := time.Now().UTC().Format("2006-01-02")
 	rows, err := s.db.Query(`
 		WITH latest AS (
 			SELECT source, MAX(fetched_at) as max_fetched
@@ -366,9 +367,9 @@ func (s *Store) GetLatestForecasts() (map[string][]models.Forecast, error) {
 		       f.wind_speed, f.wind_dir, f.narrative
 		FROM forecasts f
 		JOIN latest l ON f.source = l.source AND f.fetched_at = l.max_fetched
-		WHERE f.valid_date >= DATE('now')
+		WHERE SUBSTR(f.valid_date, 1, 10) >= ?
 		ORDER BY f.valid_date, f.source
-	`)
+	`, today)
 	if err != nil {
 		return nil, err
 	}
