@@ -1,6 +1,6 @@
 # WandiWeather Implementation Plan
 
-> **Last updated**: December 26, 2025
+> **Last updated**: January 1, 2026
 
 ## Vision
 
@@ -15,25 +15,26 @@ A hyperlocal weather service for Wandiligong/Bright that provides:
 ## Current Status
 
 ### ✅ Phase 1: Data Collection (COMPLETE)
-- 9 active PWS stations ingesting every 5 minutes
+- 4 active PWS stations ingesting every 5 minutes
 - WU 5-day forecast ingestion (GRAF model)
-- BOM 7-day forecast ingestion (Wangaratta via FTP)
-- SQLite storage with migrations system
-- 7+ days of historical data
+- SQLite storage with WAL mode and migrations
+- 13+ days of historical data (Dec 19 - Jan 1)
 
 ### ✅ Phase 2: Daily Processing (COMPLETE)
 - Daily summary computation with min/max/avg
 - Inversion detection (valley vs upper overnight temps)
-- Forecast verification (WU/BOM vs actuals)
+- Forecast verification (WU vs actuals)
 - Automated daily jobs at 6am Melbourne time
 - CLI flags: `--daily`, `--backfill-daily`
 
 ### 🔄 Phase 3: Forecast Correction (IN PROGRESS)
-- Need 2-4 weeks of verification data
-- Initial findings: WU already accurate, BOM has +8°C warm bias
+- 6 days of verification data collected (Dec 26-31)
+- Initial findings (6 days, summer hot spell):
+  - WU: -6.0°C bias on max temps, -0.5°C on mins (MAE 6.0/0.8)
+- Three-level correction strategy planned (see Phase 3 details)
 
 ### 📋 Phase 4: Enhanced Features (TODO)
-- Dashboard improvements (show both forecasts, verification stats)
+- Dashboard improvements (show corrected forecasts, verification stats)
 - Frost/heat alerts
 - Historical comparisons
 
@@ -45,8 +46,11 @@ A hyperlocal weather service for Wandiligong/Bright that provides:
 # Normal operation (server + scheduler)
 go run ./cmd/wandiweather --db data/wandiweather.db
 
-# Backfill historical observations
-go run ./cmd/wandiweather --db data/wandiweather.db --backfill7d
+# Local dev (server only, no API calls)
+go run ./cmd/wandiweather --db data/wandiweather.db --no-poll
+
+# Backfill 7-day observation history
+go run ./cmd/wandiweather --db data/wandiweather.db --backfill
 
 # Run daily jobs manually (summaries + verification)
 go run ./cmd/wandiweather --db data/wandiweather.db --daily
@@ -60,389 +64,161 @@ go run ./cmd/wandiweather --db data/wandiweather.db --once
 
 ---
 
-## Phase 1: Data Collection Foundation
+## Active Stations
 
-**Goal**: Build reliable data ingestion and storage
+| Station | Name | Elevation | Role |
+|---------|------|-----------|------|
+| IWANDI23 | Wandiligong (Primary) | 386m | ⭐ Primary - ground truth |
+| IWANDI25 | Wandiligong (Shade) | 386m | Shade reference |
+| IVICTORI162 | Wandiligong | 392m | Upper - inversion detection |
+| IBRIGH180 | Bright | 313m | Bright comparison |
 
-### 1.1 Database Schema
-```sql
--- Core observations from PWS stations
-CREATE TABLE observations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    station_id TEXT NOT NULL,
-    observed_at DATETIME NOT NULL,
-    temp REAL,
-    humidity INTEGER,
-    dewpoint REAL,
-    pressure REAL,
-    wind_speed REAL,
-    wind_gust REAL,
-    wind_dir INTEGER,
-    precip_rate REAL,
-    precip_total REAL,
-    solar_radiation REAL,
-    uv REAL,
-    heat_index REAL,
-    wind_chill REAL,
-    qc_status INTEGER,
-    raw_json TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(station_id, observed_at)
-);
-
--- Station metadata
-CREATE TABLE stations (
-    station_id TEXT PRIMARY KEY,
-    name TEXT,
-    latitude REAL,
-    longitude REAL,
-    elevation REAL,
-    elevation_tier TEXT,  -- 'valley_floor', 'mid_slope', 'upper'
-    is_primary BOOLEAN DEFAULT FALSE,
-    active BOOLEAN DEFAULT TRUE
-);
-
--- WU forecast snapshots (to measure bias)
-CREATE TABLE forecasts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    fetched_at DATETIME NOT NULL,
-    valid_date DATE NOT NULL,
-    day_of_forecast INTEGER,  -- 0=today, 1=tomorrow, etc.
-    temp_max REAL,
-    temp_min REAL,
-    humidity INTEGER,
-    precip_chance INTEGER,
-    precip_amount REAL,
-    wind_speed REAL,
-    wind_dir TEXT,
-    narrative TEXT,
-    raw_json TEXT,
-    UNIQUE(fetched_at, valid_date)
-);
-
--- Daily summaries (computed from observations)
-CREATE TABLE daily_summaries (
-    date DATE NOT NULL,
-    station_id TEXT NOT NULL,
-    temp_max REAL,
-    temp_max_time DATETIME,
-    temp_min REAL,
-    temp_min_time DATETIME,
-    temp_avg REAL,
-    humidity_avg INTEGER,
-    pressure_avg REAL,
-    precip_total REAL,
-    wind_max_gust REAL,
-    inversion_detected BOOLEAN,
-    inversion_strength REAL,  -- temp diff between valley and upper
-    PRIMARY KEY (date, station_id)
-);
-
--- Forecast verification & bias tracking
-CREATE TABLE forecast_verification (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    forecast_id INTEGER REFERENCES forecasts(id),
-    valid_date DATE,
-    forecast_temp_max REAL,
-    forecast_temp_min REAL,
-    actual_temp_max REAL,
-    actual_temp_min REAL,
-    bias_temp_max REAL,  -- forecast - actual
-    bias_temp_min REAL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- Indexes
-CREATE INDEX idx_obs_station_time ON observations(station_id, observed_at);
-CREATE INDEX idx_obs_time ON observations(observed_at);
-CREATE INDEX idx_forecasts_valid ON forecasts(valid_date);
-```
-
-### 1.2 Ingestion Service
-
-**Primary stations to ingest**:
-| Station | Elevation | Tier | Priority |
-|---------|-----------|------|----------|
-| IWANDI23 | 117m | valley_floor | ⭐ PRIMARY |
-| IWANDI24 | 161m | valley_floor | backup |
-| IVICTORI162 | 400m | upper | inversion ref |
-| IBRIGH180 | 96m | valley_floor | Bright ref |
-
-**Ingestion schedule**:
-- Current observations: every 5 minutes
-- Forecast fetch: every 6 hours (0:00, 6:00, 12:00, 18:00)
-- Daily summary computation: 00:05 each day
-
-### 1.3 Tasks
-- [ ] Set up project structure (Python/TypeScript TBD)
-- [ ] Create SQLite database with schema
-- [ ] Build WU API client
-- [ ] Implement observation ingestion cron job
-- [ ] Implement forecast ingestion cron job
-- [ ] Add basic health monitoring/alerting
-
----
-
-## Phase 2: API & Basic Display
-
-**Goal**: Expose data via API, build simple dashboard
-
-### 2.1 API Endpoints
-
-```
-GET /api/current
-  → Latest observations from primary station + neighbours
-  → Includes inversion status if detected
-
-GET /api/current/:stationId
-  → Latest observation from specific station
-
-GET /api/history?start=&end=&station=
-  → Historical observations
-  → Default: last 24 hours from primary station
-
-GET /api/daily?start=&end=
-  → Daily summaries (min/max/precip)
-
-GET /api/forecast
-  → Bias-corrected forecast for next 7 days
-
-GET /api/stations
-  → List of active stations with metadata
-
-GET /api/stats
-  → Monthly/yearly statistics, records
-```
-
-### 2.2 Dashboard Features (MVP)
-- Current conditions card (temp, feels like, humidity, wind, rain)
-- 24-hour temperature chart
-- 7-day forecast (corrected)
-- Inversion indicator
-- Comparison: "X°C warmer/colder than Bright"
-
-### 2.3 Tasks
-- [ ] Choose web framework (FastAPI? Next.js?)
-- [ ] Implement API endpoints
-- [ ] Build basic frontend dashboard
-- [ ] Deploy somewhere (Vercel? Fly.io? Home server?)
+> **Note**: Elevations from Open-Elevation API. WU metadata is incorrect (reports ~100-160m lower).
 
 ---
 
 ## Phase 3: Forecast Correction
 
-**Goal**: Learn and apply local bias corrections
+**Goal**: Learn and apply local bias corrections using Model Output Statistics (MOS) approach
 
-### 3.1 Bias Calculation
+### 3.1 Three-Level Correction Strategy
 
-After 2-4 weeks of data collection:
+**Level 0 – Bias Tables (implement now, ~6 days data)**
+- Rolling mean bias per source/target/day-of-forecast
+- Simple correction: `corrected = forecast - mean_bias`
+- Store in `forecast_correction_stats` table
+- Immediate improvement with minimal code
 
-```python
-def calculate_bias(metric: str, days: int = 30) -> dict:
-    """
-    Compare forecasts to actuals, return bias statistics.
-    
-    Returns:
-        {
-            'mean_bias': -2.3,      # forecast was 2.3°C too warm
-            'std_dev': 1.1,
-            'sample_size': 28,
-            'by_condition': {
-                'clear_calm': -4.1,  # bigger bias on clear nights
-                'cloudy': -0.8,
-            }
-        }
-    """
+**Level 1 – Regime-Aware Correction (~30 days data)**
+- Classify weather conditions into regimes:
+  - `inversion_night`: valley colder than upper slopes overnight
+  - `clear_calm`: low wind + high solar radiation previous day
+  - `heatwave`: forecast max ≥32°C or recent actuals ≥30°C
+- Compute separate bias for each regime
+- Apply regime-specific correction based on current conditions
+
+**Level 2 – Linear Models (~60-90 days data)**
+- Simple OLS regression per target per lead-day:
+  ```
+  error = β₀ + β₁*forecast_temp + β₂*prev_day_max + β₃*prev_night_min
+        + β₄*inversion_flag + β₅*clear_calm + β₆*heatwave_flag
+        + β₇*sin(doy) + β₈*cos(doy)
+  ```
+- At forecast time: `corrected = forecast + predicted_error`
+- Implement OLS in pure Go (no external ML libs)
+
+### 3.2 Key Features from PWS Network
+
+**For overnight lows (frost prediction):**
+- Valley vs upper slope temp difference (inversion strength)
+- Evening wind speed 18:00-00:00 (calm = inversion risk)
+- Previous day max solar radiation (clear vs cloudy proxy)
+- Pressure trend (stable high = radiative cooling)
+- Evening dewpoint (frost risk when temp approaches dewpoint)
+
+**For max temps (heat prediction):**
+- Previous 1-2 days max temps (heat persistence)
+- Morning temp 09:00-12:00 (nowcasting)
+- Wind direction (NW föhn vs SE cool change)
+- Morning humidity/dewpoint (dry air heats faster)
+- Pressure trend (dropping = frontal)
+
+### 3.3 Database Schema Additions
+
+```sql
+-- Precomputed bias statistics (Level 0/1)
+CREATE TABLE forecast_correction_stats (
+    source TEXT NOT NULL,           -- 'wu'
+    target TEXT NOT NULL,           -- 'tmin', 'tmax'
+    day_of_forecast INTEGER NOT NULL,
+    regime TEXT NOT NULL,           -- 'all', 'inversion', 'heatwave', etc.
+    window_days INTEGER NOT NULL,   -- e.g. 30
+    sample_size INTEGER NOT NULL,
+    mean_bias REAL NOT NULL,
+    mae REAL NOT NULL,
+    updated_at DATETIME NOT NULL,
+    PRIMARY KEY (source, target, day_of_forecast, regime)
+);
+
+-- Linear model coefficients (Level 2)
+CREATE TABLE forecast_correction_models (
+    source TEXT NOT NULL,
+    target TEXT NOT NULL,
+    day_of_forecast INTEGER NOT NULL,
+    model_type TEXT NOT NULL,       -- 'linear_v1'
+    features TEXT NOT NULL,         -- JSON list of feature names
+    coefficients TEXT NOT NULL,     -- JSON array of βs
+    intercept REAL NOT NULL,
+    sample_size INTEGER NOT NULL,
+    updated_at DATETIME NOT NULL,
+    PRIMARY KEY (source, target, day_of_forecast, model_type)
+);
 ```
 
-### 3.2 Correction Factors
+### 3.4 Architecture
 
-| Condition | Temp Max Bias | Temp Min Bias | Notes |
-|-----------|---------------|---------------|-------|
-| Baseline | TBD | TBD | After data collection |
-| Clear + calm night | - | TBD (expect -3 to -5°C) | Valley cooling |
-| Cloudy night | - | TBD (expect -1°C) | Less radiative loss |
-| NW wind | TBD | - | Foehn effect possible |
-| Winter | TBD | TBD | Inversions more common |
+New package: `internal/forecast/correction.go`
 
-### 3.3 Inversion Detection
+```go
+type Corrector interface {
+    Correct(fc models.Forecast, ctx ForecastContext) CorrectedForecast
+}
 
-```python
-def detect_inversion(observations: dict) -> dict:
-    """
-    Compare valley floor temps to upper stations.
-    
-    Normal: valley warmer during day, cooler at night (but not by much)
-    Inversion: valley significantly colder than upper slopes
-    """
-    valley_temp = observations['IWANDI23']['temp']  # 117m
-    upper_temp = observations['IVICTORI162']['temp']  # 400m
-    
-    # Normal lapse rate: ~6.5°C per 1000m
-    expected_diff = (400 - 117) / 1000 * 6.5  # ~1.8°C
-    actual_diff = upper_temp - valley_temp
-    
-    if actual_diff > expected_diff + 2:  # Upper is warmer than expected
-        return {
-            'inversion': True,
-            'strength': actual_diff - expected_diff,
-            'valley_temp': valley_temp,
-            'upper_temp': upper_temp
-        }
-    return {'inversion': False}
+type BiasTableCorrector struct { ... }   // Level 0/1
+type LinearModelCorrector struct { ... } // Level 2
 ```
 
-### 3.4 Tasks
-- [ ] Build bias calculation pipeline
-- [ ] Implement corrected forecast generation
-- [ ] Add inversion detection
-- [ ] Create frost warning logic
-- [ ] Backtest corrections against historical data
+Daily job flow:
+1. Compute daily summaries
+2. Verify forecasts against actuals
+3. Update correction stats (rolling window)
+4. Retrain linear models (when enough data)
 
----
+API serves both raw and corrected forecasts for comparison.
 
-## Phase 4: Enhanced Features
+### 3.5 Tasks
+- [ ] Create `forecast_correction_stats` table migration
+- [ ] Implement `BiasTableCorrector` (Level 0)
+- [ ] Add regime classification logic (Level 1)
+- [ ] Update daily job to compute correction stats
+- [ ] Serve corrected forecasts via API
+- [ ] Add forecast accuracy display to dashboard
+- [ ] Implement `LinearModelCorrector` (Level 2, after 60+ days)
 
-**Goal**: Add value beyond raw data
+### 3.6 Guardrails
 
-### 4.1 Alerts & Notifications
-- Frost warning (temp forecast < 2°C + clear + calm)
-- Heat warning (temp > 35°C)
-- Rain incoming (based on pressure trend + forecast)
-- Inversion forming/breaking
-
-### 4.2 Historical Analysis
-- "This day in history" - compare to past years
-- Monthly/seasonal summaries
-- Records tracking (hottest, coldest, wettest)
-- Trend analysis (is it getting warmer?)
-
-### 4.3 Nowcasting (0-6 hours)
-- Blend current conditions with forecast
-- Trend extrapolation for very short term
-- "Rain likely in next 2 hours" based on pressure/humidity trends
-
-### 4.4 Tasks
-- [ ] Implement notification system
-- [ ] Build historical comparison features
-- [ ] Add nowcasting logic
-- [ ] Create public "conditions" page for visitors
+- Minimum sample size per regime bucket (N ≥ 10), else fallback to general
+- Rolling windows (30-60 days) to handle seasonal drift
+- Monitor corrected vs raw MAE; fallback if correction hurts accuracy
+- Exclude days with suspect QC status from training
 
 ---
 
 ## Technical Stack
 
-### Backend: Go
-
 ```
 wandiweather/
-├── cmd/
-│   └── wandiweather/
-│       └── main.go           # Entry point
+├── cmd/wandiweather/main.go      # Entry point, CLI flags
 ├── internal/
-│   ├── api/
-│   │   └── handlers.go       # HTTP handlers
-│   ├── ingest/
-│   │   ├── pws.go            # Weather Underground client
-│   │   └── scheduler.go      # Cron scheduling
-│   ├── models/
-│   │   └── models.go         # Data structures
-│   ├── store/
-│   │   └── sqlite.go         # Database operations
-│   └── forecast/
-│       └── correction.go     # Bias correction logic
-├── web/
-│   ├── templates/
-│   │   ├── base.html
-│   │   ├── index.html
-│   │   └── partials/
-│   │       ├── current.html
-│   │       └── forecast.html
-│   └── static/
-│       └── style.css
-├── data/
-│   └── wandiweather.db       # SQLite database
-├── go.mod
-└── go.sum
+│   ├── api/                      # HTTP handlers + templates
+│   ├── ingest/                   # PWS client, forecast client, scheduler, daily jobs
+│   ├── models/                   # Data structures
+│   ├── store/                    # SQLite operations + migrations
+│   └── forecast/                 # Bias correction (TODO)
+├── web/static/                   # CSS, JS (HTMX, Chart.js)
+└── data/wandiweather.db          # SQLite database
 ```
 
-### Dependencies (minimal)
-
-```go
-// go.mod
-module github.com/lox/wandiweather
-
-go 1.22
-
-require (
-    github.com/mattn/go-sqlite3 v1.14.22  // SQLite driver
-    // That's it - use stdlib for everything else
-)
-```
-
-**Key decisions:**
-- `net/http` - standard library router (no framework needed)
-- `html/template` - server-rendered templates
-- `database/sql` + sqlite3 - simple persistence
-- `time.Ticker` in goroutine - scheduled ingestion (no cron library needed)
-- **HTMX** - interactive UI without JavaScript complexity
-
-### Frontend: Go Templates + HTMX
-
-HTMX lets us build interactive UIs with HTML attributes instead of JavaScript:
-
-```html
-<!-- Refresh current conditions every 60 seconds -->
-<div hx-get="/partials/current" 
-     hx-trigger="load, every 60s"
-     hx-swap="innerHTML">
-  Loading...
-</div>
-
-<!-- Click to load history chart -->
-<button hx-get="/partials/history?hours=24" 
-        hx-target="#chart">
-  Last 24 Hours
-</button>
-```
-
-**Why HTMX:**
-- No build step, no npm, no node_modules
-- Just add `<script src="htmx.min.js">` (14kb)
-- Server returns HTML fragments, not JSON
-- Perfect for Go templates
-- Single binary deployment
-
-### For charts
-- **Chart.js** via CDN (or lightweight alternative like uPlot)
-- Data passed as JSON in a `<script>` tag or fetched via API
-
----
-
-## Timeline
-
-| Phase | Duration | Outcome |
-|-------|----------|---------|
-| Phase 1 | 1-2 weeks | Data flowing into SQLite |
-| Phase 2 | 1-2 weeks | Basic API + dashboard live |
-| Phase 3 | 2-4 weeks | Need data history first, then corrections |
-| Phase 4 | Ongoing | Add features as needed |
-
-**Critical path**: Start Phase 1 ASAP - we need 2-4 weeks of forecast vs actual data before we can calculate meaningful bias corrections.
-
----
-
-## Success Metrics
-
-1. **Data reliability**: >99% uptime on ingestion
-2. **Forecast accuracy**: Beat WU raw forecast for overnight lows by >1°C MAE
-3. **Usefulness**: Actually check it before going outside!
+**Dependencies** (minimal):
+- `modernc.org/sqlite` - Pure Go SQLite driver
+- stdlib for everything else (`net/http`, `html/template`, `database/sql`)
+- HTMX + Chart.js via CDN (no npm/build step)
 
 ---
 
 ## Deployment
 
-Single binary + SQLite file = simple deployment:
+Deployed on Fly.io with persistent volume for SQLite.
 
 ```bash
 # Build
@@ -452,15 +228,10 @@ go build -o wandiweather ./cmd/wandiweather
 ./wandiweather --db ./data/wandiweather.db --port 8080
 ```
 
-**Options:**
-- Home server / Raspberry Pi (ideal - always on, local)
-- Fly.io free tier (easy, but needs persistent volume for SQLite)
-- Any VPS
-
 ---
 
-## Open Questions
+## Success Metrics
 
-1. Where to host? (Home server vs cloud)
-2. Public or private? (Share with neighbours?)
-3. Integration with home automation? (Home Assistant?)
+1. **Data reliability**: >99% uptime on ingestion
+2. **Forecast accuracy**: Beat WU raw forecast for overnight lows by >1°C MAE
+3. **Usefulness**: Actually check it before going outside!

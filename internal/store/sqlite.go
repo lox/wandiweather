@@ -261,12 +261,13 @@ func (s *Store) GetOvernightMinByTier(date time.Time) (map[string]float64, error
 }
 
 func (s *Store) GetForecastsForDate(validDate time.Time) ([]models.Forecast, error) {
+	dateStr := validDate.Format("2006-01-02")
 	rows, err := s.db.Query(`
 		SELECT id, source, fetched_at, valid_date, day_of_forecast, temp_max, temp_min, humidity, precip_chance, precip_amount, wind_speed, wind_dir, narrative
 		FROM forecasts
-		WHERE DATE(valid_date) = DATE(?)
+		WHERE SUBSTR(valid_date, 1, 10) = ?
 		ORDER BY fetched_at DESC
-	`, validDate)
+	`, dateStr)
 	if err != nil {
 		return nil, err
 	}
@@ -323,7 +324,8 @@ func (s *Store) InsertForecastVerification(v models.ForecastVerification) error 
 
 func (s *Store) HasVerificationForDate(validDate time.Time) (bool, error) {
 	var count int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM forecast_verification WHERE DATE(valid_date) = DATE(?)`, validDate).Scan(&count)
+	dateStr := validDate.Format("2006-01-02")
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM forecast_verification WHERE SUBSTR(valid_date, 1, 10) = ?`, dateStr).Scan(&count)
 	return count > 0, err
 }
 
