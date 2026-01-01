@@ -4,10 +4,13 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"log"
+	"math"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/lox/wandiweather/internal/models"
@@ -379,16 +382,17 @@ type ForecastData struct {
 }
 
 type ForecastDay struct {
-	Date             time.Time
-	DayName          string
-	DateStr          string
-	IsToday          bool
-	WU               *models.Forecast
-	BOM              *models.Forecast
-	WUCorrectedMax   *float64 `json:"wu_corrected_max,omitempty"`
-	WUCorrectedMin   *float64 `json:"wu_corrected_min,omitempty"`
-	BOMCorrectedMax  *float64 `json:"bom_corrected_max,omitempty"`
-	BOMCorrectedMin  *float64 `json:"bom_corrected_min,omitempty"`
+	Date               time.Time
+	DayName            string
+	DateStr            string
+	IsToday            bool
+	WU                 *models.Forecast
+	BOM                *models.Forecast
+	WUCorrectedMax     *float64 `json:"wu_corrected_max,omitempty"`
+	WUCorrectedMin     *float64 `json:"wu_corrected_min,omitempty"`
+	BOMCorrectedMax    *float64 `json:"bom_corrected_max,omitempty"`
+	BOMCorrectedMin    *float64 `json:"bom_corrected_min,omitempty"`
+	GeneratedNarrative string   `json:"generated_narrative"`
 }
 
 func (s *Server) getForecastData() (*ForecastData, error) {
@@ -472,6 +476,7 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 		date := todayDate.AddDate(0, 0, i)
 		key := date.Format("2006-01-02")
 		if day, ok := dayMap[key]; ok {
+			day.GeneratedNarrative = buildGeneratedNarrative(day)
 			days = append(days, *day)
 		}
 	}
@@ -639,4 +644,117 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
 	json.NewEncoder(w).Encode(health)
+}
+
+// extractCondition extracts the weather condition from a WU narrative,
+// stripping out temperature information.
+func extractCondition(narrative string) string {
+	s := strings.TrimSpace(narrative)
+	if s == "" {
+		return ""
+	}
+
+	parts := strings.Split(s, ".")
+	var conditions []string
+	for _, p := range parts {
+		t := strings.TrimSpace(p)
+		if t == "" {
+			continue
+		}
+		lower := strings.ToLower(t)
+		if strings.Contains(lower, "highs") || strings.Contains(lower, "lows") ||
+			strings.Contains(lower, "°c") || strings.Contains(lower, "degrees") {
+			continue
+		}
+		conditions = append(conditions, t)
+	}
+
+	if len(conditions) == 0 {
+		return ""
+	}
+	return strings.Join(conditions, ". ")
+}
+
+// chooseCondition picks the best condition text from available forecasts.
+// Prefers WU when it mentions storms/thunder (more specific), otherwise BOM.
+func chooseCondition(day *ForecastDay) string {
+	var wuCond, bomCond string
+
+	if day.WU != nil && day.WU.Narrative.Valid {
+		wuCond = extractCondition(day.WU.Narrative.String)
+	}
+	if day.BOM != nil && day.BOM.Narrative.Valid {
+		bomCond = strings.TrimSpace(day.BOM.Narrative.String)
+		bomCond = strings.TrimRight(bomCond, ".")
+	}
+
+	// Prefer WU if it mentions storms/thunder (more detailed)
+	if wuCond != "" {
+		lower := strings.ToLower(wuCond)
+		if strings.Contains(lower, "storm") || strings.Contains(lower, "thunder") {
+			return wuCond
+		}
+	}
+
+	// Otherwise prefer BOM (cleaner condition-only text)
+	if bomCond != "" {
+		return bomCond
+	}
+
+	return wuCond
+}
+
+// chooseTemps returns the best available temps, preferring corrected values.
+func chooseTemps(day *ForecastDay) (hi, lo float64, haveHi, haveLo bool) {
+	// Max: prefer corrected WU, then corrected BOM, then raw
+	if day.WUCorrectedMax != nil {
+		hi, haveHi = *day.WUCorrectedMax, true
+	} else if day.BOMCorrectedMax != nil {
+		hi, haveHi = *day.BOMCorrectedMax, true
+	} else if day.WU != nil && day.WU.TempMax.Valid {
+		hi, haveHi = day.WU.TempMax.Float64, true
+	} else if day.BOM != nil && day.BOM.TempMax.Valid {
+		hi, haveHi = day.BOM.TempMax.Float64, true
+	}
+
+	// Min: prefer corrected WU, then corrected BOM, then raw
+	if day.WUCorrectedMin != nil {
+		lo, haveLo = *day.WUCorrectedMin, true
+	} else if day.BOMCorrectedMin != nil {
+		lo, haveLo = *day.BOMCorrectedMin, true
+	} else if day.WU != nil && day.WU.TempMin.Valid {
+		lo, haveLo = day.WU.TempMin.Float64, true
+	} else if day.BOM != nil && day.BOM.TempMin.Valid {
+		lo, haveLo = day.BOM.TempMin.Float64, true
+	}
+
+	return
+}
+
+// buildGeneratedNarrative creates a clean narrative with corrected temps.
+func buildGeneratedNarrative(day *ForecastDay) string {
+	cond := chooseCondition(day)
+	hi, lo, haveHi, haveLo := chooseTemps(day)
+
+	var parts []string
+
+	if cond != "" {
+		parts = append(parts, cond+".")
+	}
+
+	// Build temp phrase
+	switch {
+	case haveHi && haveLo:
+		parts = append(parts, fmt.Sprintf("High %d°C, low %d°C.", int(math.Round(hi)), int(math.Round(lo))))
+	case haveHi:
+		parts = append(parts, fmt.Sprintf("High %d°C.", int(math.Round(hi))))
+	case haveLo:
+		parts = append(parts, fmt.Sprintf("Low %d°C.", int(math.Round(lo))))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return strings.Join(parts, " ")
 }
