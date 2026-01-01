@@ -450,3 +450,125 @@ func (s *Store) GetVerificationHistory(source string, limit int) ([]models.Forec
 	}
 	return results, rows.Err()
 }
+
+type BiasRow struct {
+	Source        string
+	DayOfForecast int
+	AvgBiasMax    float64
+	AvgBiasMin    float64
+	MAEMax        float64
+	MAEMin        float64
+	CountMax      int
+	CountMin      int
+}
+
+func (s *Store) GetBiasStatsFromVerification(windowDays int) ([]BiasRow, error) {
+	cutoff := time.Now().AddDate(0, 0, -windowDays).Format("2006-01-02")
+	rows, err := s.db.Query(`
+		SELECT 
+			f.source,
+			f.day_of_forecast,
+			COALESCE(AVG(v.bias_temp_max), 0) as avg_bias_max,
+			COALESCE(AVG(v.bias_temp_min), 0) as avg_bias_min,
+			COALESCE(AVG(ABS(v.bias_temp_max)), 0) as mae_max,
+			COALESCE(AVG(ABS(v.bias_temp_min)), 0) as mae_min,
+			COUNT(v.bias_temp_max) as count_max,
+			COUNT(v.bias_temp_min) as count_min
+		FROM forecast_verification v
+		JOIN forecasts f ON v.forecast_id = f.id
+		WHERE SUBSTR(v.valid_date, 1, 10) >= ?
+		  AND (v.bias_temp_max IS NOT NULL OR v.bias_temp_min IS NOT NULL)
+		GROUP BY f.source, f.day_of_forecast
+	`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []BiasRow
+	for rows.Next() {
+		var r BiasRow
+		if err := rows.Scan(&r.Source, &r.DayOfForecast, &r.AvgBiasMax, &r.AvgBiasMin,
+			&r.MAEMax, &r.MAEMin, &r.CountMax, &r.CountMin); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+type CorrectionStats struct {
+	Source        string
+	Target        string
+	DayOfForecast int
+	Regime        string
+	WindowDays    int
+	SampleSize    int
+	MeanBias      float64
+	MAE           float64
+	UpdatedAt     time.Time
+}
+
+func (s *Store) UpsertCorrectionStats(stats CorrectionStats) error {
+	_, err := s.db.Exec(`
+		INSERT INTO forecast_correction_stats (source, target, day_of_forecast, regime, window_days, sample_size, mean_bias, mae, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(source, target, day_of_forecast, regime) DO UPDATE SET
+			window_days = excluded.window_days,
+			sample_size = excluded.sample_size,
+			mean_bias = excluded.mean_bias,
+			mae = excluded.mae,
+			updated_at = excluded.updated_at
+	`, stats.Source, stats.Target, stats.DayOfForecast, stats.Regime, stats.WindowDays, stats.SampleSize, stats.MeanBias, stats.MAE, stats.UpdatedAt)
+	return err
+}
+
+func (s *Store) GetCorrectionStats(source, target string, dayOfForecast int) (*CorrectionStats, error) {
+	row := s.db.QueryRow(`
+		SELECT source, target, day_of_forecast, regime, window_days, sample_size, mean_bias, mae, updated_at
+		FROM forecast_correction_stats
+		WHERE source = ? AND target = ? AND day_of_forecast = ? AND regime = 'all'
+	`, source, target, dayOfForecast)
+
+	var stats CorrectionStats
+	err := row.Scan(&stats.Source, &stats.Target, &stats.DayOfForecast, &stats.Regime,
+		&stats.WindowDays, &stats.SampleSize, &stats.MeanBias, &stats.MAE, &stats.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &stats, nil
+}
+
+func (s *Store) GetAllCorrectionStats() (map[string]map[string]map[int]*CorrectionStats, error) {
+	rows, err := s.db.Query(`
+		SELECT source, target, day_of_forecast, regime, window_days, sample_size, mean_bias, mae, updated_at
+		FROM forecast_correction_stats
+		WHERE regime = 'all'
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]map[string]map[int]*CorrectionStats)
+	for rows.Next() {
+		var stats CorrectionStats
+		if err := rows.Scan(&stats.Source, &stats.Target, &stats.DayOfForecast, &stats.Regime,
+			&stats.WindowDays, &stats.SampleSize, &stats.MeanBias, &stats.MAE, &stats.UpdatedAt); err != nil {
+			return nil, err
+		}
+
+		if result[stats.Source] == nil {
+			result[stats.Source] = make(map[string]map[int]*CorrectionStats)
+		}
+		if result[stats.Source][stats.Target] == nil {
+			result[stats.Source][stats.Target] = make(map[int]*CorrectionStats)
+		}
+		s := stats
+		result[stats.Source][stats.Target][stats.DayOfForecast] = &s
+	}
+	return result, rows.Err()
+}

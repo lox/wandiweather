@@ -17,6 +17,7 @@ A hyperlocal weather service for Wandiligong/Bright that provides:
 ### ✅ Phase 1: Data Collection (COMPLETE)
 - 4 active PWS stations ingesting every 5 minutes
 - WU 5-day forecast ingestion (GRAF model)
+- BOM 7-day forecast ingestion (Wangaratta via FTP)
 - SQLite storage with WAL mode and migrations
 - 13+ days of historical data (Dec 19 - Jan 1)
 
@@ -31,6 +32,8 @@ A hyperlocal weather service for Wandiligong/Bright that provides:
 - 6 days of verification data collected (Dec 26-31)
 - Initial findings (6 days, summer hot spell):
   - WU: -6.0°C bias on max temps, -0.5°C on mins (MAE 6.0/0.8)
+  - BOM: -2.2°C bias on max temps, +3.4°C on mins (MAE 3.5/3.8)
+- Level 0 bias correction implemented and active
 - Three-level correction strategy planned (see Phase 3 details)
 
 ### 📋 Phase 4: Enhanced Features (TODO)

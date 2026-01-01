@@ -174,6 +174,24 @@ ALTER TABLE forecast_verification ADD COLUMN actual_precip REAL;
 ALTER TABLE forecast_verification ADD COLUMN bias_precip REAL;
 `,
 	},
+	{
+		Version:     7,
+		Description: "Add forecast correction stats table",
+		SQL: `
+CREATE TABLE IF NOT EXISTS forecast_correction_stats (
+    source TEXT NOT NULL,
+    target TEXT NOT NULL,
+    day_of_forecast INTEGER NOT NULL,
+    regime TEXT NOT NULL DEFAULT 'all',
+    window_days INTEGER NOT NULL,
+    sample_size INTEGER NOT NULL,
+    mean_bias REAL NOT NULL,
+    mae REAL NOT NULL,
+    updated_at DATETIME NOT NULL,
+    PRIMARY KEY (source, target, day_of_forecast, regime)
+);
+`,
+	},
 }
 
 func (s *Store) Migrate() error {

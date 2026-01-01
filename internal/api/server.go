@@ -379,12 +379,16 @@ type ForecastData struct {
 }
 
 type ForecastDay struct {
-	Date    time.Time
-	DayName string
-	DateStr string
-	IsToday bool
-	WU      *models.Forecast
-	BOM     *models.Forecast
+	Date             time.Time
+	DayName          string
+	DateStr          string
+	IsToday          bool
+	WU               *models.Forecast
+	BOM              *models.Forecast
+	WUCorrectedMax   *float64 `json:"wu_corrected_max,omitempty"`
+	WUCorrectedMin   *float64 `json:"wu_corrected_min,omitempty"`
+	BOMCorrectedMax  *float64 `json:"bom_corrected_max,omitempty"`
+	BOMCorrectedMin  *float64 `json:"bom_corrected_min,omitempty"`
 }
 
 func (s *Server) getForecastData() (*ForecastData, error) {
@@ -396,6 +400,11 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 	stats, err := s.store.GetVerificationStats()
 	if err != nil {
 		log.Printf("get verification stats: %v", err)
+	}
+
+	correctionStats, err := s.store.GetAllCorrectionStats()
+	if err != nil {
+		log.Printf("get correction stats: %v", err)
 	}
 
 	loc, _ := time.LoadLocation("Australia/Melbourne")
@@ -416,6 +425,19 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 		}
 		f := fc
 		dayMap[key].WU = &f
+
+		if fc.TempMax.Valid {
+			if bias := getCorrectionBias(correctionStats, "wu", "tmax", fc.DayOfForecast); bias != 0 {
+				corrected := fc.TempMax.Float64 - bias
+				dayMap[key].WUCorrectedMax = &corrected
+			}
+		}
+		if fc.TempMin.Valid {
+			if bias := getCorrectionBias(correctionStats, "wu", "tmin", fc.DayOfForecast); bias != 0 {
+				corrected := fc.TempMin.Float64 - bias
+				dayMap[key].WUCorrectedMin = &corrected
+			}
+		}
 	}
 
 	for _, fc := range forecasts["bom"] {
@@ -430,6 +452,19 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 		}
 		f := fc
 		dayMap[key].BOM = &f
+
+		if fc.TempMax.Valid {
+			if bias := getCorrectionBias(correctionStats, "bom", "tmax", fc.DayOfForecast); bias != 0 {
+				corrected := fc.TempMax.Float64 - bias
+				dayMap[key].BOMCorrectedMax = &corrected
+			}
+		}
+		if fc.TempMin.Valid {
+			if bias := getCorrectionBias(correctionStats, "bom", "tmin", fc.DayOfForecast); bias != 0 {
+				corrected := fc.TempMin.Float64 - bias
+				dayMap[key].BOMCorrectedMin = &corrected
+			}
+		}
 	}
 
 	var days []ForecastDay
@@ -452,6 +487,25 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 	}
 
 	return data, nil
+}
+
+func getCorrectionBias(stats map[string]map[string]map[int]*store.CorrectionStats, source, target string, dayOfForecast int) float64 {
+	if stats == nil {
+		return 0
+	}
+	if stats[source] == nil {
+		return 0
+	}
+	if stats[source][target] == nil {
+		return 0
+	}
+	if s := stats[source][target][dayOfForecast]; s != nil {
+		if s.SampleSize < 5 {
+			return 0
+		}
+		return s.MeanBias
+	}
+	return 0
 }
 
 func (s *Server) handleForecastPartial(w http.ResponseWriter, r *http.Request) {

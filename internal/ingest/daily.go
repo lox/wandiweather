@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/lox/wandiweather/internal/forecast"
 	"github.com/lox/wandiweather/internal/models"
 	"github.com/lox/wandiweather/internal/store"
 )
@@ -26,6 +27,11 @@ func (d *DailyJobs) RunAll(forDate time.Time) error {
 
 	if err := d.VerifyForecasts(forDate); err != nil {
 		log.Printf("daily: verification error: %v", err)
+	}
+
+	corrector := forecast.NewBiasCorrector(d.store)
+	if err := corrector.ComputeStats(30); err != nil {
+		log.Printf("daily: correction stats error: %v", err)
 	}
 
 	return nil
@@ -227,6 +233,11 @@ func (d *DailyJobs) BackfillVerification() error {
 		if err := d.VerifyForecasts(date); err != nil {
 			log.Printf("daily: verify %s: %v", date.Format("2006-01-02"), err)
 		}
+	}
+
+	corrector := forecast.NewBiasCorrector(d.store)
+	if err := corrector.ComputeStats(30); err != nil {
+		log.Printf("daily: correction stats error: %v", err)
 	}
 
 	return nil
