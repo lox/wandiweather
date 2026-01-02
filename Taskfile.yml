@@ -49,3 +49,8 @@ tasks:
     cmds:
       - rm -f data/wandiweather.db data/wandiweather.db-shm data/wandiweather.db-wal
       - fly sftp get /data/wandiweather.db data/wandiweather.db -a wandiweather
+
+  deploy:
+    desc: Deploy to Fly.io
+    cmds:
+      - fly deploy -a wandiweather
