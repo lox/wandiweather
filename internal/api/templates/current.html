@@ -11,7 +11,7 @@
     <div class="conditions-inline">
         {{if .Primary.Humidity.Valid}}<span>{{.Primary.Humidity.Int64}}% humidity</span>{{end}}
         {{if .Primary.WindGust.Valid}}<span>💨 {{printf "%.0f" .Primary.WindGust.Float64}} km/h</span>{{end}}
-        {{if .Primary.UV.Valid}}{{if gt .Primary.UV.Float64 0.0}}<span>☀️ UV {{printf "%.0f" .Primary.UV.Float64}}</span>{{end}}{{end}}
+        {{if .Primary.UV.Valid}}{{if gt .Primary.UV.Float64 0.0}}<span>☀️ UV {{printf "%.0f" .Primary.UV.Float64}}</span>{{else if .Moon}}<span>{{.Moon.Emoji}} {{.Moon.Illumination}}%</span>{{end}}{{end}}
     </div>
     {{end}}
     {{else}}
@@ -42,9 +42,7 @@
     </div>
     {{if .TodayStats}}
     <div class="observed-progress">
-        So far: 🌡️ {{printf "%.0f" .TodayStats.MinTemp}}° – {{printf "%.0f" .TodayStats.MaxTemp}}°
-        {{if .TodayStats.HasWind}}, 💨 Max {{printf "%.0f" .TodayStats.MaxWind}} wind / {{printf "%.0f" .TodayStats.MaxGust}} gust km/h{{end}}
-        {{if .TodayStats.HasRain}} · {{printf "%.1f" .TodayStats.RainTotal}}mm rain{{end}}
+        So far: <span class="obs-temp">{{printf "%.0f" .TodayStats.MinTemp}}° – {{printf "%.0f" .TodayStats.MaxTemp}}°</span>{{if .TodayStats.HasWind}}, max {{printf "%.0f" .TodayStats.MaxWind}}/{{printf "%.0f" .TodayStats.MaxGust}} km/h wind{{end}}{{if .TodayStats.HasRain}}, {{printf "%.1f" .TodayStats.RainTotal}}mm rain{{end}}
     </div>
     {{end}}
 </div>
@@ -65,7 +63,7 @@
 <div class="forecast-section" hx-get="/partials/forecast" hx-trigger="load, every 3600s" hx-swap="innerHTML"></div>
 
 <div class="stations-toggle">
-    <button onclick="toggleStations()">Show all stations</button>
+    <a onclick="toggleStations()">Show all stations</a>
 </div>
 
 <div id="stations-grid" class="stations-grid">
@@ -93,5 +91,5 @@
 </div>
 
 <div class="updated">
-    Updated {{.LastUpdated.Format "3:04:05 PM"}} · <a href="/accuracy">Forecast accuracy</a>
+    Updated {{.LastUpdated.Format "3:04:05 PM"}} · <a href="/accuracy">Forecast accuracy</a> · <a href="mailto:lachlan@ljd.cc">Email me</a>
 </div>

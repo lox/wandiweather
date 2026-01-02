@@ -127,6 +127,38 @@ type CurrentData struct {
 	TodayForecast *TodayForecast
 	TodayStats    *TodayStats
 	LastUpdated   time.Time
+	Moon          *MoonData
+}
+
+// MoonData contains moon phase information for display.
+type MoonData struct {
+	Phase        string // e.g., "Waxing Gibbous"
+	Illumination int    // 0-100 percentage
+	Emoji        string // 🌑🌒🌓🌔🌕🌖🌗🌘
+}
+
+// moonEmoji returns the appropriate moon phase emoji.
+func moonEmoji(phase forecast.MoonPhase) string {
+	switch phase {
+	case forecast.MoonNew:
+		return "🌑"
+	case forecast.MoonWaxingCrescent:
+		return "🌒"
+	case forecast.MoonFirstQuarter:
+		return "🌓"
+	case forecast.MoonWaxingGibbous:
+		return "🌔"
+	case forecast.MoonFull:
+		return "🌕"
+	case forecast.MoonWaningGibbous:
+		return "🌖"
+	case forecast.MoonLastQuarter:
+		return "🌗"
+	case forecast.MoonWaningCrescent:
+		return "🌘"
+	default:
+		return "🌙"
+	}
 }
 
 // IndexData wraps CurrentData with additional page-level data.
@@ -248,10 +280,19 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 	}
 
 	loc := s.loc
-	today := time.Now().In(loc)
-	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+	now := time.Now().In(loc)
+	todayDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
-	minTemp, maxTemp, rainTotal, maxWind, maxGust, err := s.store.GetTodayStats("IWANDI23", today)
+	// Add moon phase data
+	phase := forecast.GetMoonPhase(now)
+	phaseName, _ := forecast.MoonDescription(phase)
+	data.Moon = &MoonData{
+		Phase:        phaseName,
+		Illumination: forecast.MoonIllumination(now),
+		Emoji:        moonEmoji(phase),
+	}
+
+	minTemp, maxTemp, rainTotal, maxWind, maxGust, err := s.store.GetTodayStats("IWANDI23", now)
 	if err == nil {
 		ts := &TodayStats{}
 		if minTemp.Valid {
