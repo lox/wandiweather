@@ -70,6 +70,9 @@ type DailySummary struct {
 	WindMaxGust       sql.NullFloat64
 	InversionDetected sql.NullBool
 	InversionStrength sql.NullFloat64
+	RegimeHeatwave    sql.NullBool
+	RegimeInversion   sql.NullBool
+	RegimeClearCalm   sql.NullBool
 }
 
 type ForecastVerification struct {

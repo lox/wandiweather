@@ -573,3 +573,147 @@ func (s *Store) GetAllCorrectionStats() (map[string]map[string]map[int]*Correcti
 	}
 	return result, rows.Err()
 }
+
+func (s *Store) GetRecentDailySummaries(stationID string, days int) ([]models.DailySummary, error) {
+	rows, err := s.db.Query(`
+		SELECT date, station_id, temp_max, temp_max_time, temp_min, temp_min_time, temp_avg, 
+		       humidity_avg, pressure_avg, precip_total, wind_max_gust, inversion_detected, inversion_strength,
+		       regime_heatwave, regime_inversion, regime_clear_calm
+		FROM daily_summaries
+		WHERE station_id = ?
+		ORDER BY date DESC
+		LIMIT ?
+	`, stationID, days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var summaries []models.DailySummary
+	for rows.Next() {
+		var ds models.DailySummary
+		if err := rows.Scan(&ds.Date, &ds.StationID, &ds.TempMax, &ds.TempMaxTime, &ds.TempMin, &ds.TempMinTime,
+			&ds.TempAvg, &ds.HumidityAvg, &ds.PressureAvg, &ds.PrecipTotal, &ds.WindMaxGust,
+			&ds.InversionDetected, &ds.InversionStrength,
+			&ds.RegimeHeatwave, &ds.RegimeInversion, &ds.RegimeClearCalm); err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, ds)
+	}
+	return summaries, rows.Err()
+}
+
+type NowcastLog struct {
+	ID                   int64
+	Date                 time.Time
+	StationID            string
+	ObservedMorning      sql.NullFloat64
+	ForecastMorning      sql.NullFloat64
+	Delta                sql.NullFloat64
+	Adjustment           sql.NullFloat64
+	ForecastMaxRaw       sql.NullFloat64
+	ForecastMaxCorrected sql.NullFloat64
+	ActualMax            sql.NullFloat64
+	CreatedAt            time.Time
+}
+
+func (s *Store) UpsertNowcastLog(log NowcastLog) error {
+	_, err := s.db.Exec(`
+		INSERT INTO nowcast_log (date, station_id, observed_morning, forecast_morning, delta, adjustment, forecast_max_raw, forecast_max_corrected, actual_max)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(date, station_id) DO UPDATE SET
+			observed_morning = excluded.observed_morning,
+			forecast_morning = excluded.forecast_morning,
+			delta = excluded.delta,
+			adjustment = excluded.adjustment,
+			forecast_max_raw = excluded.forecast_max_raw,
+			forecast_max_corrected = excluded.forecast_max_corrected,
+			actual_max = excluded.actual_max
+	`, log.Date, log.StationID, log.ObservedMorning, log.ForecastMorning, log.Delta, log.Adjustment,
+		log.ForecastMaxRaw, log.ForecastMaxCorrected, log.ActualMax)
+	return err
+}
+
+func (s *Store) GetNowcastLog(stationID string, date time.Time) (*NowcastLog, error) {
+	dateStr := date.Format("2006-01-02")
+	row := s.db.QueryRow(`
+		SELECT id, date, station_id, observed_morning, forecast_morning, delta, adjustment, 
+		       forecast_max_raw, forecast_max_corrected, actual_max, created_at
+		FROM nowcast_log
+		WHERE station_id = ? AND SUBSTR(date, 1, 10) = ?
+	`, stationID, dateStr)
+
+	var log NowcastLog
+	err := row.Scan(&log.ID, &log.Date, &log.StationID, &log.ObservedMorning, &log.ForecastMorning,
+		&log.Delta, &log.Adjustment, &log.ForecastMaxRaw, &log.ForecastMaxCorrected, &log.ActualMax, &log.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &log, nil
+}
+
+func (s *Store) UpdateNowcastActualMax(stationID string, date time.Time, actualMax float64) error {
+	dateStr := date.Format("2006-01-02")
+	_, err := s.db.Exec(`
+		UPDATE nowcast_log SET actual_max = ? WHERE station_id = ? AND SUBSTR(date, 1, 10) = ?
+	`, actualMax, stationID, dateStr)
+	return err
+}
+
+func (s *Store) GetMorningObservations(stationID string, date time.Time) ([]models.Observation, error) {
+	loc, _ := time.LoadLocation("Australia/Melbourne")
+	localDate := date.In(loc)
+	morningStart := time.Date(localDate.Year(), localDate.Month(), localDate.Day(), 9, 0, 0, 0, loc)
+	morningEnd := time.Date(localDate.Year(), localDate.Month(), localDate.Day(), 11, 0, 0, 0, loc)
+
+	return s.GetObservations(stationID, morningStart.UTC(), morningEnd.UTC())
+}
+
+func (s *Store) UpsertDailySummaryWithRegimes(ds models.DailySummary) error {
+	_, err := s.db.Exec(`
+		INSERT INTO daily_summaries (date, station_id, temp_max, temp_max_time, temp_min, temp_min_time, 
+		    temp_avg, humidity_avg, pressure_avg, precip_total, wind_max_gust, 
+		    inversion_detected, inversion_strength, regime_heatwave, regime_inversion, regime_clear_calm)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(date, station_id) DO UPDATE SET
+			temp_max = excluded.temp_max,
+			temp_max_time = excluded.temp_max_time,
+			temp_min = excluded.temp_min,
+			temp_min_time = excluded.temp_min_time,
+			temp_avg = excluded.temp_avg,
+			humidity_avg = excluded.humidity_avg,
+			pressure_avg = excluded.pressure_avg,
+			precip_total = excluded.precip_total,
+			wind_max_gust = excluded.wind_max_gust,
+			inversion_detected = excluded.inversion_detected,
+			inversion_strength = excluded.inversion_strength,
+			regime_heatwave = excluded.regime_heatwave,
+			regime_inversion = excluded.regime_inversion,
+			regime_clear_calm = excluded.regime_clear_calm
+	`, ds.Date, ds.StationID, ds.TempMax, ds.TempMaxTime, ds.TempMin, ds.TempMinTime,
+		ds.TempAvg, ds.HumidityAvg, ds.PressureAvg, ds.PrecipTotal, ds.WindMaxGust,
+		ds.InversionDetected, ds.InversionStrength, ds.RegimeHeatwave, ds.RegimeInversion, ds.RegimeClearCalm)
+	return err
+}
+
+func (s *Store) GetCorrectionStatsForRegime(source, target string, dayOfForecast int, regime string) (*CorrectionStats, error) {
+	row := s.db.QueryRow(`
+		SELECT source, target, day_of_forecast, regime, window_days, sample_size, mean_bias, mae, updated_at
+		FROM forecast_correction_stats
+		WHERE source = ? AND target = ? AND day_of_forecast = ? AND regime = ?
+	`, source, target, dayOfForecast, regime)
+
+	var stats CorrectionStats
+	err := row.Scan(&stats.Source, &stats.Target, &stats.DayOfForecast, &stats.Regime,
+		&stats.WindowDays, &stats.SampleSize, &stats.MeanBias, &stats.MAE, &stats.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &stats, nil
+}

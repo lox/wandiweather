@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lox/wandiweather/internal/forecast"
 	"github.com/lox/wandiweather/internal/models"
 	"github.com/lox/wandiweather/internal/store"
 )
@@ -27,7 +28,15 @@ type Server struct {
 }
 
 func NewServer(store *store.Store, port string) *Server {
-	tmpl := template.Must(template.ParseFS(templateFS, "templates/*.html"))
+	funcs := template.FuncMap{
+		"deref": func(f *float64) float64 {
+			if f == nil {
+				return 0
+			}
+			return *f
+		},
+	}
+	tmpl := template.Must(template.New("").Funcs(funcs).ParseFS(templateFS, "templates/*.html"))
 	return &Server{
 		store: store,
 		port:  port,
@@ -85,12 +94,15 @@ type CurrentData struct {
 }
 
 type TodayForecast struct {
-	TempMax      float64
-	TempMin      float64
-	PrecipChance int64
-	PrecipAmount float64
-	Narrative    string
-	HasPrecip    bool
+	TempMax           float64
+	TempMin           float64
+	TempMaxRaw        float64
+	NowcastApplied    bool
+	NowcastAdjustment float64
+	PrecipChance      int64
+	PrecipAmount      float64
+	Narrative         string
+	HasPrecip         bool
 }
 
 type TodayStats struct {
@@ -212,6 +224,16 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 	forecasts, err := s.store.GetLatestForecasts()
 	if err == nil {
 		correctionStats, _ := s.store.GetAllCorrectionStats()
+		nowcaster := forecast.NewNowcaster(s.store)
+		biasCorrector := forecast.NewBiasCorrector(s.store)
+
+		var primaryStationID string
+		for _, st := range stations {
+			if st.IsPrimary {
+				primaryStationID = st.StationID
+				break
+			}
+		}
 
 		for _, fc := range forecasts["wu"] {
 			fcDate := fc.ValidDate.Format("2006-01-02")
@@ -219,12 +241,26 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 			if fcDate == todayStr {
 				tf := &TodayForecast{}
 
-				// Apply bias correction to temps and round to match narrative
 				if fc.TempMax.Valid {
 					tf.TempMax = fc.TempMax.Float64
 					if bias := getCorrectionBias(correctionStats, "wu", "tmax", fc.DayOfForecast); bias != 0 {
 						tf.TempMax = fc.TempMax.Float64 - bias
 					}
+					tf.TempMaxRaw = math.Round(tf.TempMax)
+
+					if fc.DayOfForecast == 0 && primaryStationID != "" {
+						biasMax := biasCorrector.GetCorrection("wu", "tmax", 0)
+						nowcast, err := nowcaster.ComputeNowcast(primaryStationID, fc.TempMax.Float64, biasMax)
+						if err == nil && nowcast != nil {
+							tf.TempMax = nowcast.CorrectedMax
+							tf.NowcastApplied = true
+							tf.NowcastAdjustment = nowcast.Adjustment
+							if err := nowcaster.LogNowcast(primaryStationID, fc.TempMax.Float64, nowcast); err != nil {
+								log.Printf("api: log nowcast: %v", err)
+							}
+						}
+					}
+
 					tf.TempMax = math.Round(tf.TempMax)
 				}
 				if fc.TempMin.Valid {
@@ -243,7 +279,6 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 					tf.PrecipAmount = fc.PrecipAmount.Float64
 				}
 
-				// Build a ForecastDay to generate narrative with corrected temps
 				var bomForecast *models.Forecast
 				for _, bfc := range forecasts["bom"] {
 					if bfc.ValidDate.Format("2006-01-02") == todayStr {
@@ -505,11 +540,31 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 		}
 	}
 
+	stations, _ := s.store.GetActiveStations()
+	var primaryStationID string
+	for _, st := range stations {
+		if st.IsPrimary {
+			primaryStationID = st.StationID
+			break
+		}
+	}
+
+	nowcaster := forecast.NewNowcaster(s.store)
+	biasCorrector := forecast.NewBiasCorrector(s.store)
+
 	var days []ForecastDay
 	for i := 0; i < 5; i++ {
 		date := todayDate.AddDate(0, 0, i)
 		key := date.Format("2006-01-02")
 		if day, ok := dayMap[key]; ok {
+			if day.IsToday && day.WU != nil && day.WU.TempMax.Valid && primaryStationID != "" {
+				biasMax := biasCorrector.GetCorrection("wu", "tmax", 0)
+				nowcast, err := nowcaster.ComputeNowcast(primaryStationID, day.WU.TempMax.Float64, biasMax)
+				if err == nil && nowcast != nil {
+					corrected := nowcast.CorrectedMax
+					day.WUCorrectedMax = &corrected
+				}
+			}
 			day.GeneratedNarrative = buildGeneratedNarrative(day)
 			days = append(days, *day)
 		}
@@ -528,6 +583,8 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 	return data, nil
 }
 
+const minBiasSamples = 7
+
 func getCorrectionBias(stats map[string]map[string]map[int]*store.CorrectionStats, source, target string, dayOfForecast int) float64 {
 	if stats == nil {
 		return 0
@@ -539,7 +596,7 @@ func getCorrectionBias(stats map[string]map[string]map[int]*store.CorrectionStat
 		return 0
 	}
 	if s := stats[source][target][dayOfForecast]; s != nil {
-		if s.SampleSize < 5 {
+		if s.SampleSize < minBiasSamples {
 			return 0
 		}
 		return s.MeanBias

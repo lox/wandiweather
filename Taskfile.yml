@@ -21,6 +21,19 @@ tasks:
     cmds:
       - go test ./...
 
+  lint:
+    desc: Run linter (staticcheck)
+    cmds:
+      - go vet ./...
+      - go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+
+  check:
+    desc: Run build, test, and lint
+    cmds:
+      - task: build
+      - task: test
+      - task: lint
+
   once:
     desc: Run single ingestion and exit
     cmds:

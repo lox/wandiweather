@@ -9,6 +9,8 @@ task dev       # Run local dev server with hot reload (no API polling)
 task run       # Run server with polling enabled
 task build     # Build the binary
 task test      # Run all tests
+task lint      # Run linter (go vet + staticcheck)
+task check     # Run build, test, and lint
 task once      # Run single ingestion and exit
 task daily     # Run daily jobs manually
 task pull-db   # Pull production database from Fly.io
@@ -20,8 +22,11 @@ task pull-db   # Pull production database from Fly.io
 - `internal/api/server.go` - HTTP handlers
 - `internal/api/templates/` - HTML templates (HTMX)
 - `internal/ingest/` - Weather data ingestion (PWS, forecasts)
+- `internal/ingest/daily.go` - Daily jobs (summaries, verification, regimes)
+- `internal/forecast/` - Forecast correction (bias, regimes, nowcast)
 - `internal/store/` - SQLite storage and migrations
 - `internal/models/` - Data structures
+- `docs/plans/` - Implementation plans
 
 ## Conventions
 

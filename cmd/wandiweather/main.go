@@ -18,17 +18,18 @@ import (
 )
 
 var defaultStations = []models.Station{
-	{StationID: "IWANDI23", Name: "Wandiligong (Primary)", Latitude: -36.794, Longitude: 146.977, Elevation: 386, ElevationTier: "local", IsPrimary: true, Active: true},
-	{StationID: "IWANDI25", Name: "Wandiligong (Shade)", Latitude: -36.794, Longitude: 146.977, Elevation: 386, ElevationTier: "local", IsPrimary: false, Active: true},
-	{StationID: "IBRIGH180", Name: "Bright", Latitude: -36.729, Longitude: 146.968, Elevation: 313, ElevationTier: "local", IsPrimary: false, Active: true},
-	{StationID: "IVICTORI162", Name: "Wandiligong", Latitude: -36.757, Longitude: 146.986, Elevation: 392, ElevationTier: "local", IsPrimary: false, Active: true},
+	{StationID: "IWANDI23", Name: "Wandiligong (Primary)", Latitude: -36.794, Longitude: 146.977, Elevation: 386, ElevationTier: "valley_floor", IsPrimary: true, Active: true},
+	{StationID: "IWANDI25", Name: "Wandiligong (Shade)", Latitude: -36.794, Longitude: 146.977, Elevation: 386, ElevationTier: "valley_floor", IsPrimary: false, Active: true},
+	{StationID: "IBRIGH180", Name: "Bright", Latitude: -36.729, Longitude: 146.968, Elevation: 313, ElevationTier: "valley_floor", IsPrimary: false, Active: true},
+	{StationID: "IVICTORI162", Name: "Wandiligong", Latitude: -36.757, Longitude: 146.986, Elevation: 392, ElevationTier: "valley_floor", IsPrimary: false, Active: false},
+	{StationID: "IHARRI19", Name: "Harrietville", Latitude: -36.9, Longitude: 147.053, Elevation: 543, ElevationTier: "upper", IsPrimary: false, Active: true},
 }
 
 var stationIDs = []string{
-	"IWANDI23",    // Primary station
-	"IWANDI25",    // Shade reference
-	"IVICTORI162", // Upper (inversion detection)
-	"IBRIGH180",   // Bright comparison
+	"IWANDI23",  // Primary station (valley floor)
+	"IWANDI25",  // Shade reference (valley floor)
+	"IBRIGH180", // Bright (valley floor)
+	"IHARRI19",  // Harrietville (upper, for inversion detection)
 }
 
 const (

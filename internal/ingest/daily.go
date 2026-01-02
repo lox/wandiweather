@@ -61,6 +61,28 @@ func (d *DailyJobs) ComputeDailySummaries(forDate time.Time) error {
 		}
 	}
 
+	var primaryStation *models.Station
+	for _, st := range stations {
+		if st.IsPrimary {
+			primaryStation = &st
+			break
+		}
+	}
+
+	var prevDays []models.DailySummary
+	if primaryStation != nil {
+		prevDays, _ = d.store.GetRecentDailySummaries(primaryStation.StationID, 2)
+	}
+
+	forecasts, _ := d.store.GetForecastsForDate(forDate)
+	var todayForecast *models.Forecast
+	for _, fc := range forecasts {
+		if fc.Source == "wu" {
+			todayForecast = &fc
+			break
+		}
+	}
+
 	computed := 0
 	for _, station := range stations {
 		summary, err := d.store.ComputeDailySummary(station.StationID, forDate)
@@ -72,12 +94,24 @@ func (d *DailyJobs) ComputeDailySummaries(forDate time.Time) error {
 			continue
 		}
 
-		if station.ElevationTier == "valley_floor" {
+		if station.ElevationTier == "valley_floor" || station.ElevationTier == "local" {
 			summary.InversionDetected = sql.NullBool{Bool: inversionDetected, Valid: true}
 			summary.InversionStrength = sql.NullFloat64{Float64: inversionStrength, Valid: inversionDetected}
 		}
 
-		if err := d.store.UpsertDailySummary(*summary); err != nil {
+		if station.IsPrimary {
+			regimes := forecast.ClassifyRegime(todayForecast, summary, prevDays)
+			summary.RegimeHeatwave = sql.NullBool{Bool: regimes.Heatwave, Valid: true}
+			summary.RegimeInversion = sql.NullBool{Bool: regimes.InversionNight, Valid: true}
+			summary.RegimeClearCalm = sql.NullBool{Bool: regimes.ClearCalm, Valid: true}
+
+			if regimes.Heatwave || regimes.InversionNight {
+				log.Printf("daily: regime for %s: heatwave=%v inversion=%v",
+					forDate.Format("2006-01-02"), regimes.Heatwave, regimes.InversionNight)
+			}
+		}
+
+		if err := d.store.UpsertDailySummaryWithRegimes(*summary); err != nil {
 			log.Printf("daily: upsert summary %s: %v", station.StationID, err)
 			continue
 		}
@@ -114,6 +148,12 @@ func (d *DailyJobs) VerifyForecasts(forDate time.Time) error {
 	if !actuals.TempMax.Valid || !actuals.TempMin.Valid {
 		log.Printf("daily: no actuals for %s on %s", primary.StationID, forDate.Format("2006-01-02"))
 		return nil
+	}
+
+	if actuals.TempMax.Valid {
+		if err := d.store.UpdateNowcastActualMax(primary.StationID, forDate, actuals.TempMax.Float64); err != nil {
+			log.Printf("daily: update nowcast actual: %v", err)
+		}
 	}
 
 	forecasts, err := d.store.GetForecastsForDate(forDate)

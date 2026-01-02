@@ -192,6 +192,49 @@ CREATE TABLE IF NOT EXISTS forecast_correction_stats (
 );
 `,
 	},
+	{
+		Version:     8,
+		Description: "Add regime columns to daily_summaries",
+		SQL: `
+ALTER TABLE daily_summaries ADD COLUMN regime_heatwave BOOLEAN;
+ALTER TABLE daily_summaries ADD COLUMN regime_inversion BOOLEAN;
+ALTER TABLE daily_summaries ADD COLUMN regime_clear_calm BOOLEAN;
+`,
+	},
+	{
+		Version:     9,
+		Description: "Add nowcast_log table for morning nowcast tracking",
+		SQL: `
+CREATE TABLE IF NOT EXISTS nowcast_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date DATE NOT NULL,
+    station_id TEXT NOT NULL,
+    observed_morning REAL,
+    forecast_morning REAL,
+    delta REAL,
+    adjustment REAL,
+    forecast_max_raw REAL,
+    forecast_max_corrected REAL,
+    actual_max REAL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(date, station_id)
+);
+`,
+	},
+	{
+		Version:     10,
+		Description: "Add correction_performance table for monitoring",
+		SQL: `
+CREATE TABLE IF NOT EXISTS correction_performance (
+    date DATE PRIMARY KEY,
+    mae_raw REAL,
+    mae_level0 REAL,
+    mae_level1 REAL,
+    mae_nowcast REAL,
+    mae_level2 REAL
+);
+`,
+	},
 }
 
 func (s *Store) Migrate() error {

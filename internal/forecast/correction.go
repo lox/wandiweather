@@ -6,6 +6,13 @@ import (
 	"github.com/lox/wandiweather/internal/store"
 )
 
+const (
+	maxBiasCorrection   = 8.0
+	maxTotalCorrection  = 10.0
+	minRegimeSamples    = 15
+	minBiasSamples      = 7
+)
+
 type BiasCorrector struct {
 	store *store.Store
 }
@@ -65,5 +72,100 @@ func (c *BiasCorrector) GetCorrection(source string, target string, dayOfForecas
 	if err != nil || stats == nil {
 		return 0
 	}
-	return stats.MeanBias
+	if stats.SampleSize < minBiasSamples {
+		return 0
+	}
+	return capCorrection(stats.MeanBias, maxBiasCorrection)
+}
+
+func (c *BiasCorrector) GetCorrectionForRegime(source string, target string, dayOfForecast int, regime string) float64 {
+	if regime != "all" && regime != "" {
+		stats, err := c.store.GetCorrectionStatsForRegime(source, target, dayOfForecast, regime)
+		if err == nil && stats != nil && stats.SampleSize >= minRegimeSamples {
+			return capCorrection(stats.MeanBias, maxBiasCorrection)
+		}
+	}
+
+	stats, err := c.store.GetCorrectionStats(source, target, dayOfForecast)
+	if err != nil || stats == nil {
+		return 0
+	}
+	if stats.SampleSize < minBiasSamples {
+		return 0
+	}
+	return capCorrection(stats.MeanBias, maxBiasCorrection)
+}
+
+func capCorrection(correction float64, limit float64) float64 {
+	if correction > limit {
+		return limit
+	}
+	if correction < -limit {
+		return -limit
+	}
+	return correction
+}
+
+func abs(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+type CorrectedForecast struct {
+	RawMax           float64
+	RawMin           float64
+	BiasMax          float64
+	BiasMin          float64
+	CorrectedMax     float64
+	CorrectedMin     float64
+	NowcastApplied   bool
+	NowcastDelta     float64
+	NowcastAdjustment float64
+	Regime           string
+}
+
+func (c *BiasCorrector) ApplyCorrections(
+	source string,
+	dayOfForecast int,
+	rawMax float64,
+	rawMin float64,
+	regime RegimeFlags,
+	nowcast *NowcastCorrection,
+) CorrectedForecast {
+	regimeStr := RegimeToString(regime)
+
+	biasMax := c.GetCorrectionForRegime(source, "tmax", dayOfForecast, regimeStr)
+	biasMin := c.GetCorrectionForRegime(source, "tmin", dayOfForecast, regimeStr)
+
+	correctedMax := rawMax - biasMax
+	correctedMin := rawMin - biasMin
+
+	result := CorrectedForecast{
+		RawMax:       rawMax,
+		RawMin:       rawMin,
+		BiasMax:      biasMax,
+		BiasMin:      biasMin,
+		CorrectedMax: correctedMax,
+		CorrectedMin: correctedMin,
+		Regime:       regimeStr,
+	}
+
+	if nowcast != nil && dayOfForecast == 0 {
+		adjustment := capCorrection(nowcast.Adjustment, maxAdjustment)
+		correctedMax = rawMax - biasMax + adjustment
+		
+		totalCorrection := correctedMax - rawMax
+		if abs(totalCorrection) > maxTotalCorrection {
+			correctedMax = rawMax - capCorrection(totalCorrection, maxTotalCorrection)
+		}
+		
+		result.CorrectedMax = correctedMax
+		result.NowcastApplied = true
+		result.NowcastDelta = nowcast.Delta
+		result.NowcastAdjustment = adjustment
+	}
+
+	return result
 }
