@@ -74,6 +74,7 @@ type CurrentData struct {
 	ValleyTemp    float64
 	Stations      map[string]*models.Observation
 	StationMeta   map[string]models.Station
+	AllStations   []StationReading
 	ValleyFloor   []StationReading
 	MidSlope      []StationReading
 	Upper         []StationReading
@@ -143,6 +144,7 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 		}
 
 		reading := StationReading{Station: st, Obs: obs}
+		data.AllStations = append(data.AllStations, reading)
 		switch st.ElevationTier {
 		case "valley_floor":
 			data.ValleyFloor = append(data.ValleyFloor, reading)

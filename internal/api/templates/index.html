@@ -154,21 +154,37 @@
         
         .stations-grid {
             display: none;
-            gap: 1rem;
             margin-top: 1rem;
         }
-        .stations-grid.show { display: grid; grid-template-columns: repeat(3, 1fr); }
-        .tier { }
-        .tier-label { font-size: 0.7rem; color: #4fc3f7; margin-bottom: 0.5rem; }
-        .tier-stations { display: flex; flex-direction: column; gap: 0.25rem; }
-        .station-row {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.8rem;
-            padding: 0.25rem 0;
+        .stations-grid.show { display: block; }
+        .stations-table { width: 100%; }
+        .station-header {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 2fr;
+            gap: 0.5rem;
+            font-size: 0.7rem;
+            color: #4fc3f7;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #1a1a2e;
         }
-        .station-name { color: #888; }
-        .station-temp { }
+        .station-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 2fr;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #1a1a2e;
+        }
+        .station-row.primary { background: rgba(79, 195, 247, 0.1); }
+        .station-col-name { display: flex; flex-direction: column; gap: 0.15rem; }
+        .station-col-name a { color: #4fc3f7; text-decoration: none; }
+        .station-col-name a:hover { text-decoration: underline; }
+        .station-label { font-size: 0.65rem; color: #666; }
+        .station-col-temp { text-align: right; }
+        .station-col-elev { text-align: right; color: #888; }
+        .station-col-coords { text-align: right; font-size: 0.7rem; }
+        .station-col-coords a { color: #888; text-decoration: none; }
+        .station-col-coords a:hover { color: #4fc3f7; }
         
         .updated { 
             text-align: center; 

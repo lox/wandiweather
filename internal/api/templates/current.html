@@ -68,45 +68,27 @@
 </div>
 
 <div id="stations-grid" class="stations-grid">
-    {{if .ValleyFloor}}
-    <div class="tier">
-        <div class="tier-label">Valley Floor</div>
-        <div class="tier-stations">
-            {{range .ValleyFloor}}
-            <div class="station-row">
-                <span class="station-name">{{.Station.StationID}}</span>
-                <span class="station-temp">{{if .Obs}}{{if .Obs.Temp.Valid}}{{printf "%.1f" .Obs.Temp.Float64}}°{{else}}—{{end}}{{else}}—{{end}}</span>
-            </div>
-            {{end}}
+    <div class="stations-table">
+        <div class="station-header">
+            <span class="station-col-name">Station</span>
+            <span class="station-col-temp">Temp</span>
+            <span class="station-col-elev">Elev</span>
+            <span class="station-col-coords">Location</span>
         </div>
-    </div>
-    {{end}}
-    {{if .MidSlope}}
-    <div class="tier">
-        <div class="tier-label">Mid Slope</div>
-        <div class="tier-stations">
-            {{range .MidSlope}}
-            <div class="station-row">
-                <span class="station-name">{{.Station.StationID}}</span>
-                <span class="station-temp">{{if .Obs}}{{if .Obs.Temp.Valid}}{{printf "%.1f" .Obs.Temp.Float64}}°{{else}}—{{end}}{{else}}—{{end}}</span>
-            </div>
-            {{end}}
+        {{range .AllStations}}
+        <div class="station-row{{if .Station.IsPrimary}} primary{{end}}">
+            <span class="station-col-name">
+                <a href="https://www.wunderground.com/dashboard/pws/{{.Station.StationID}}" target="_blank" rel="noopener">{{.Station.StationID}}</a>
+                <span class="station-label">{{.Station.Name}}</span>
+            </span>
+            <span class="station-col-temp">{{if .Obs}}{{if .Obs.Temp.Valid}}{{printf "%.1f" .Obs.Temp.Float64}}°{{else}}—{{end}}{{else}}—{{end}}</span>
+            <span class="station-col-elev">{{printf "%.0f" .Station.Elevation}}m</span>
+            <span class="station-col-coords">
+                <a href="https://www.google.com/maps?q={{.Station.Latitude}},{{.Station.Longitude}}" target="_blank" rel="noopener">{{printf "%.3f" .Station.Latitude}}, {{printf "%.3f" .Station.Longitude}}</a>
+            </span>
         </div>
+        {{end}}
     </div>
-    {{end}}
-    {{if .Upper}}
-    <div class="tier">
-        <div class="tier-label">Upper</div>
-        <div class="tier-stations">
-            {{range .Upper}}
-            <div class="station-row">
-                <span class="station-name">{{.Station.StationID}}</span>
-                <span class="station-temp">{{if .Obs}}{{if .Obs.Temp.Valid}}{{printf "%.1f" .Obs.Temp.Float64}}°{{else}}—{{end}}{{else}}—{{end}}</span>
-            </div>
-            {{end}}
-        </div>
-    </div>
-    {{end}}
 </div>
 
 <div class="updated">
