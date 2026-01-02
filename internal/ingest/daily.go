@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"time"
 
@@ -21,19 +22,27 @@ func NewDailyJobs(store *store.Store) *DailyJobs {
 func (d *DailyJobs) RunAll(forDate time.Time) error {
 	log.Printf("daily: running jobs for %s", forDate.Format("2006-01-02"))
 
+	var errs []error
+
 	if err := d.ComputeDailySummaries(forDate); err != nil {
 		log.Printf("daily: summaries error: %v", err)
+		errs = append(errs, fmt.Errorf("summaries: %w", err))
 	}
 
 	if err := d.VerifyForecasts(forDate); err != nil {
 		log.Printf("daily: verification error: %v", err)
+		errs = append(errs, fmt.Errorf("verification: %w", err))
 	}
 
 	corrector := forecast.NewBiasCorrector(d.store)
 	if err := corrector.ComputeStats(30); err != nil {
 		log.Printf("daily: correction stats error: %v", err)
+		errs = append(errs, fmt.Errorf("correction stats: %w", err))
 	}
 
+	if len(errs) > 0 {
+		return fmt.Errorf("daily jobs had %d errors", len(errs))
+	}
 	return nil
 }
 
@@ -111,7 +120,7 @@ func (d *DailyJobs) ComputeDailySummaries(forDate time.Time) error {
 			}
 		}
 
-		if err := d.store.UpsertDailySummaryWithRegimes(*summary); err != nil {
+		if err := d.store.UpsertDailySummary(*summary); err != nil {
 			log.Printf("daily: upsert summary %s: %v", station.StationID, err)
 			continue
 		}

@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/lox/wandiweather/internal/models"
@@ -141,20 +142,24 @@ func (s *Store) ComputeDailySummary(stationID string, date time.Time) (*models.D
 		return nil, err
 	}
 
-	// Get time of max temp
-	s.db.QueryRow(`SELECT observed_at FROM observations WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND temp = ? LIMIT 1`,
-		stationID, startOfDay, endOfDay, summary.TempMax).Scan(&summary.TempMaxTime)
-	// Get time of min temp
-	s.db.QueryRow(`SELECT observed_at FROM observations WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND temp = ? LIMIT 1`,
-		stationID, startOfDay, endOfDay, summary.TempMin).Scan(&summary.TempMinTime)
+	if err := s.db.QueryRow(`SELECT observed_at FROM observations WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND temp = ? LIMIT 1`,
+		stationID, startOfDay, endOfDay, summary.TempMax).Scan(&summary.TempMaxTime); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("lookup max temp time: %w", err)
+	}
+	if err := s.db.QueryRow(`SELECT observed_at FROM observations WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND temp = ? LIMIT 1`,
+		stationID, startOfDay, endOfDay, summary.TempMin).Scan(&summary.TempMinTime); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("lookup min temp time: %w", err)
+	}
 
 	return &summary, nil
 }
 
 func (s *Store) UpsertDailySummary(ds models.DailySummary) error {
 	_, err := s.db.Exec(`
-		INSERT INTO daily_summaries (date, station_id, temp_max, temp_max_time, temp_min, temp_min_time, temp_avg, humidity_avg, pressure_avg, precip_total, wind_max_gust, inversion_detected, inversion_strength)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO daily_summaries (date, station_id, temp_max, temp_max_time, temp_min, temp_min_time, 
+		    temp_avg, humidity_avg, pressure_avg, precip_total, wind_max_gust, 
+		    inversion_detected, inversion_strength, regime_heatwave, regime_inversion, regime_clear_calm)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(date, station_id) DO UPDATE SET
 			temp_max = excluded.temp_max,
 			temp_max_time = excluded.temp_max_time,
@@ -166,8 +171,13 @@ func (s *Store) UpsertDailySummary(ds models.DailySummary) error {
 			precip_total = excluded.precip_total,
 			wind_max_gust = excluded.wind_max_gust,
 			inversion_detected = excluded.inversion_detected,
-			inversion_strength = excluded.inversion_strength
-	`, ds.Date, ds.StationID, ds.TempMax, ds.TempMaxTime, ds.TempMin, ds.TempMinTime, ds.TempAvg, ds.HumidityAvg, ds.PressureAvg, ds.PrecipTotal, ds.WindMaxGust, ds.InversionDetected, ds.InversionStrength)
+			inversion_strength = excluded.inversion_strength,
+			regime_heatwave = excluded.regime_heatwave,
+			regime_inversion = excluded.regime_inversion,
+			regime_clear_calm = excluded.regime_clear_calm
+	`, ds.Date, ds.StationID, ds.TempMax, ds.TempMaxTime, ds.TempMin, ds.TempMinTime,
+		ds.TempAvg, ds.HumidityAvg, ds.PressureAvg, ds.PrecipTotal, ds.WindMaxGust,
+		ds.InversionDetected, ds.InversionStrength, ds.RegimeHeatwave, ds.RegimeInversion, ds.RegimeClearCalm)
 	return err
 }
 
@@ -225,7 +235,10 @@ func (s *Store) GetObservationDates(stationID string) ([]time.Time, error) {
 		if err := rows.Scan(&dateStr); err != nil {
 			return nil, err
 		}
-		date, _ := time.Parse("2006-01-02", dateStr)
+		date, err := time.Parse("2006-01-02", dateStr)
+		if err != nil {
+			return nil, fmt.Errorf("parse observation date %q: %w", dateStr, err)
+		}
 		dates = append(dates, date)
 	}
 	return dates, rows.Err()
@@ -672,32 +685,7 @@ func (s *Store) GetMorningObservations(stationID string, date time.Time) ([]mode
 	return s.GetObservations(stationID, morningStart.UTC(), morningEnd.UTC())
 }
 
-func (s *Store) UpsertDailySummaryWithRegimes(ds models.DailySummary) error {
-	_, err := s.db.Exec(`
-		INSERT INTO daily_summaries (date, station_id, temp_max, temp_max_time, temp_min, temp_min_time, 
-		    temp_avg, humidity_avg, pressure_avg, precip_total, wind_max_gust, 
-		    inversion_detected, inversion_strength, regime_heatwave, regime_inversion, regime_clear_calm)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(date, station_id) DO UPDATE SET
-			temp_max = excluded.temp_max,
-			temp_max_time = excluded.temp_max_time,
-			temp_min = excluded.temp_min,
-			temp_min_time = excluded.temp_min_time,
-			temp_avg = excluded.temp_avg,
-			humidity_avg = excluded.humidity_avg,
-			pressure_avg = excluded.pressure_avg,
-			precip_total = excluded.precip_total,
-			wind_max_gust = excluded.wind_max_gust,
-			inversion_detected = excluded.inversion_detected,
-			inversion_strength = excluded.inversion_strength,
-			regime_heatwave = excluded.regime_heatwave,
-			regime_inversion = excluded.regime_inversion,
-			regime_clear_calm = excluded.regime_clear_calm
-	`, ds.Date, ds.StationID, ds.TempMax, ds.TempMaxTime, ds.TempMin, ds.TempMinTime,
-		ds.TempAvg, ds.HumidityAvg, ds.PressureAvg, ds.PrecipTotal, ds.WindMaxGust,
-		ds.InversionDetected, ds.InversionStrength, ds.RegimeHeatwave, ds.RegimeInversion, ds.RegimeClearCalm)
-	return err
-}
+
 
 func (s *Store) GetCorrectionStatsForRegime(source, target string, dayOfForecast int, regime string) (*CorrectionStats, error) {
 	row := s.db.QueryRow(`

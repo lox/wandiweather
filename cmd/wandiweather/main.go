@@ -59,8 +59,12 @@ func main() {
 	}
 	defer db.Close()
 
-	db.Exec("PRAGMA journal_mode=WAL")
-	db.Exec("PRAGMA busy_timeout=5000")
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		log.Printf("warning: failed to set journal_mode=WAL: %v", err)
+	}
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		log.Printf("warning: failed to set busy_timeout: %v", err)
+	}
 
 	// Load timezone once at startup
 	loc, err := time.LoadLocation("Australia/Melbourne")

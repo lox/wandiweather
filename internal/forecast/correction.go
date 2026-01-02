@@ -68,14 +68,7 @@ func (c *BiasCorrector) ComputeStats(windowDays int) error {
 }
 
 func (c *BiasCorrector) GetCorrection(source string, target string, dayOfForecast int) float64 {
-	stats, err := c.store.GetCorrectionStats(source, target, dayOfForecast)
-	if err != nil || stats == nil {
-		return 0
-	}
-	if stats.SampleSize < minBiasSamples {
-		return 0
-	}
-	return capCorrection(stats.MeanBias, maxBiasCorrection)
+	return c.GetCorrectionForRegime(source, target, dayOfForecast, "all")
 }
 
 func (c *BiasCorrector) GetCorrectionForRegime(source string, target string, dayOfForecast int, regime string) float64 {
@@ -106,12 +99,7 @@ func capCorrection(correction float64, limit float64) float64 {
 	return correction
 }
 
-func abs(x float64) float64 {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
+
 
 type CorrectedForecast struct {
 	RawMax           float64
@@ -155,12 +143,14 @@ func (c *BiasCorrector) ApplyCorrections(
 	if nowcast != nil && dayOfForecast == 0 {
 		adjustment := capCorrection(nowcast.Adjustment, maxAdjustment)
 		correctedMax = rawMax - biasMax + adjustment
-		
+
 		totalCorrection := correctedMax - rawMax
-		if abs(totalCorrection) > maxTotalCorrection {
-			correctedMax = rawMax - capCorrection(totalCorrection, maxTotalCorrection)
+		if totalCorrection > maxTotalCorrection {
+			correctedMax = rawMax + maxTotalCorrection
+		} else if totalCorrection < -maxTotalCorrection {
+			correctedMax = rawMax - maxTotalCorrection
 		}
-		
+
 		result.CorrectedMax = correctedMax
 		result.NowcastApplied = true
 		result.NowcastDelta = nowcast.Delta

@@ -806,7 +806,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if health.Status != "ok" {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
-	json.NewEncoder(w).Encode(health)
+	if err := json.NewEncoder(w).Encode(health); err != nil {
+		log.Printf("health: write response: %v", err)
+	}
 }
 
 // extractCondition extracts the weather condition from a WU narrative,

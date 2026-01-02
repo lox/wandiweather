@@ -24,6 +24,14 @@ func NewPWS(apiKey string) *PWS {
 	}
 }
 
+func truncateBody(b []byte) string {
+	s := string(b)
+	if len(s) > 512 {
+		return s[:512] + "...(truncated)"
+	}
+	return s
+}
+
 type CurrentResponse struct {
 	Observations []CurrentObservation `json:"observations"`
 }
@@ -61,21 +69,29 @@ func (p *PWS) FetchCurrent(stationID string) (*models.Observation, string, error
 	operation := func() error {
 		resp, err := p.client.Get(url)
 		if err != nil {
-			return backoff.Permanent(fmt.Errorf("fetch current: %w", err))
+			return fmt.Errorf("fetch current: %w", err)
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+		if resp.StatusCode == http.StatusTooManyRequests {
 			return fmt.Errorf("rate limited: status %d", resp.StatusCode)
+		}
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			b, _ := io.ReadAll(resp.Body)
+			return backoff.Permanent(fmt.Errorf("auth error: status %d: %s", resp.StatusCode, truncateBody(b)))
+		}
+		if resp.StatusCode >= 500 {
+			b, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("server error: status %d: %s", resp.StatusCode, truncateBody(b))
 		}
 		if resp.StatusCode != http.StatusOK {
 			b, _ := io.ReadAll(resp.Body)
-			return backoff.Permanent(fmt.Errorf("fetch current: status %d: %s", resp.StatusCode, string(b)))
+			return backoff.Permanent(fmt.Errorf("client error: status %d: %s", resp.StatusCode, truncateBody(b)))
 		}
 
 		body, err = io.ReadAll(resp.Body)
 		if err != nil {
-			return backoff.Permanent(fmt.Errorf("read body: %w", err))
+			return fmt.Errorf("read body: %w", err)
 		}
 		return nil
 	}
@@ -213,21 +229,29 @@ func (p *PWS) fetchHistory(stationID, endpoint string) ([]models.Observation, er
 	operation := func() error {
 		resp, err := p.client.Get(url)
 		if err != nil {
-			return backoff.Permanent(fmt.Errorf("fetch history: %w", err))
+			return fmt.Errorf("fetch history: %w", err)
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+		if resp.StatusCode == http.StatusTooManyRequests {
 			return fmt.Errorf("rate limited: status %d", resp.StatusCode)
+		}
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			b, _ := io.ReadAll(resp.Body)
+			return backoff.Permanent(fmt.Errorf("auth error: status %d: %s", resp.StatusCode, truncateBody(b)))
+		}
+		if resp.StatusCode >= 500 {
+			b, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("server error: status %d: %s", resp.StatusCode, truncateBody(b))
 		}
 		if resp.StatusCode != http.StatusOK {
 			b, _ := io.ReadAll(resp.Body)
-			return backoff.Permanent(fmt.Errorf("fetch history: status %d: %s", resp.StatusCode, string(b)))
+			return backoff.Permanent(fmt.Errorf("client error: status %d: %s", resp.StatusCode, truncateBody(b)))
 		}
 
 		body, err = io.ReadAll(resp.Body)
 		if err != nil {
-			return backoff.Permanent(fmt.Errorf("read body: %w", err))
+			return fmt.Errorf("read body: %w", err)
 		}
 		return nil
 	}
