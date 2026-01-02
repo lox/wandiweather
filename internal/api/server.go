@@ -110,6 +110,9 @@ type TodayStats struct {
 	MaxTemp   float64
 	RainTotal float64
 	HasRain   bool
+	MaxWind   float64
+	MaxGust   float64
+	HasWind   bool
 }
 
 type StationReading struct {
@@ -205,7 +208,7 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 	today := time.Now().In(loc)
 	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
 
-	minTemp, maxTemp, rainTotal, err := s.store.GetTodayStats("IWANDI23", today)
+	minTemp, maxTemp, rainTotal, maxWind, maxGust, err := s.store.GetTodayStats("IWANDI23", today)
 	if err == nil {
 		ts := &TodayStats{}
 		if minTemp.Valid {
@@ -217,6 +220,11 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 		if rainTotal.Valid && rainTotal.Float64 > 0 {
 			ts.RainTotal = rainTotal.Float64
 			ts.HasRain = true
+		}
+		if maxWind.Valid || maxGust.Valid {
+			ts.MaxWind = maxWind.Float64
+			ts.MaxGust = maxGust.Float64
+			ts.HasWind = true
 		}
 		data.TodayStats = ts
 	}

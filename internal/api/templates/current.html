@@ -10,7 +10,7 @@
     {{if .Primary}}
     <div class="conditions-inline">
         {{if .Primary.Humidity.Valid}}<span>{{.Primary.Humidity.Int64}}% humidity</span>{{end}}
-        {{if .Primary.WindSpeed.Valid}}<span>💨 {{printf "%.0f" .Primary.WindSpeed.Float64}} km/h</span>{{end}}
+        {{if .Primary.WindGust.Valid}}<span>💨 {{printf "%.0f" .Primary.WindGust.Float64}} km/h</span>{{end}}
         {{if .Primary.UV.Valid}}{{if gt .Primary.UV.Float64 0.0}}<span>☀️ UV {{printf "%.0f" .Primary.UV.Float64}}</span>{{end}}{{end}}
     </div>
     {{end}}
@@ -42,7 +42,8 @@
     </div>
     {{if .TodayStats}}
     <div class="observed-progress">
-        So far: {{printf "%.0f" .TodayStats.MinTemp}}° – {{printf "%.0f" .TodayStats.MaxTemp}}°
+        So far: 🌡️ {{printf "%.0f" .TodayStats.MinTemp}}° – {{printf "%.0f" .TodayStats.MaxTemp}}°
+        {{if .TodayStats.HasWind}}, 💨 Max {{printf "%.0f" .TodayStats.MaxWind}} wind / {{printf "%.0f" .TodayStats.MaxGust}} gust km/h{{end}}
         {{if .TodayStats.HasRain}} · {{printf "%.1f" .TodayStats.RainTotal}}mm rain{{end}}
     </div>
     {{end}}

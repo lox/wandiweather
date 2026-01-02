@@ -342,15 +342,15 @@ func (s *Store) GetPrimaryStation() (*models.Station, error) {
 	return &st, nil
 }
 
-func (s *Store) GetTodayStats(stationID string, localDate time.Time) (minTemp, maxTemp, rainTotal sql.NullFloat64, err error) {
+func (s *Store) GetTodayStats(stationID string, localDate time.Time) (minTemp, maxTemp, rainTotal, maxWind, maxGust sql.NullFloat64, err error) {
 	startUTC := time.Date(localDate.Year(), localDate.Month(), localDate.Day(), 0, 0, 0, 0, time.UTC).Add(-11 * time.Hour)
 	endUTC := time.Now().UTC()
 
 	err = s.db.QueryRow(`
-		SELECT MIN(temp), MAX(temp), MAX(precip_total)
+		SELECT MIN(temp), MAX(temp), MAX(precip_total), MAX(wind_speed), MAX(wind_gust)
 		FROM observations
 		WHERE station_id = ? AND observed_at >= ? AND observed_at <= ? AND temp IS NOT NULL
-	`, stationID, startUTC, endUTC).Scan(&minTemp, &maxTemp, &rainTotal)
+	`, stationID, startUTC, endUTC).Scan(&minTemp, &maxTemp, &rainTotal, &maxWind, &maxGust)
 	return
 }
 
