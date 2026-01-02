@@ -5,6 +5,9 @@ import (
 	"log"
 	"time"
 
+	"github.com/lox/wandiweather/internal/forecast"
+	"github.com/lox/wandiweather/internal/imagegen"
+	"github.com/lox/wandiweather/internal/models"
 	"github.com/lox/wandiweather/internal/store"
 )
 
@@ -17,6 +20,8 @@ type Scheduler struct {
 	stationIDs  []string
 	obsInterval time.Duration
 	fcInterval  time.Duration
+	imageGen    *imagegen.Generator
+	imageCache  *imagegen.Cache
 }
 
 func NewScheduler(store *store.Store, pws *PWS, forecast *ForecastClient, stationIDs []string) *Scheduler {
@@ -32,17 +37,26 @@ func NewScheduler(store *store.Store, pws *PWS, forecast *ForecastClient, statio
 	}
 }
 
+// SetImageGenerator configures the scheduler to pre-generate weather images after forecast ingestion.
+func (s *Scheduler) SetImageGenerator(gen *imagegen.Generator, cache *imagegen.Cache) {
+	s.imageGen = gen
+	s.imageCache = cache
+}
+
 func (s *Scheduler) Run(ctx context.Context) {
 	s.ingestObservations()
 	s.ingestForecasts()
 	s.runDailyJobsIfNeeded()
+	s.checkWeatherImage()
 
 	obsTicker := time.NewTicker(s.obsInterval)
 	fcTicker := time.NewTicker(s.fcInterval)
 	dailyTicker := time.NewTicker(1 * time.Hour)
+	imageTicker := time.NewTicker(1 * time.Hour) // Check hourly for time-of-day transitions
 	defer obsTicker.Stop()
 	defer fcTicker.Stop()
 	defer dailyTicker.Stop()
+	defer imageTicker.Stop()
 
 	for {
 		select {
@@ -55,6 +69,8 @@ func (s *Scheduler) Run(ctx context.Context) {
 			s.ingestForecasts()
 		case <-dailyTicker.C:
 			s.runDailyJobsIfNeeded()
+		case <-imageTicker.C:
+			s.checkWeatherImage()
 		}
 	}
 }
@@ -107,6 +123,98 @@ func (s *Scheduler) ingestForecasts() {
 			log.Printf("scheduler: inserted %d BOM forecast days", inserted)
 		}
 	}
+
+	// Pre-generate weather image for current condition
+	s.ensureWeatherImage(forecasts)
+}
+
+// checkWeatherImage checks if the current time-of-day image is cached and generates if needed.
+// Called hourly to handle dawn/day/dusk/night transitions.
+func (s *Scheduler) checkWeatherImage() {
+	if s.imageGen == nil || s.imageCache == nil {
+		return
+	}
+
+	// Fetch latest WU forecasts from database
+	allForecasts, err := s.store.GetLatestForecasts()
+	if err != nil {
+		log.Printf("scheduler: failed to get forecasts for image check: %v", err)
+		return
+	}
+
+	wuForecasts, ok := allForecasts["wu"]
+	if !ok || len(wuForecasts) == 0 {
+		return
+	}
+
+	s.ensureWeatherImage(wuForecasts)
+}
+
+// ensureWeatherImage pre-generates weather images for the current time of day.
+func (s *Scheduler) ensureWeatherImage(forecasts []models.Forecast) {
+	if s.imageGen == nil || s.imageCache == nil {
+		return
+	}
+
+	loc, _ := time.LoadLocation("Australia/Melbourne")
+	now := time.Now().In(loc)
+	todayDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	tod := forecast.GetTimeOfDay(now)
+
+	// Find today's forecast
+	var todayForecast *models.Forecast
+	for i := range forecasts {
+		if forecasts[i].ValidDate.Format("2006-01-02") == todayDate.Format("2006-01-02") {
+			todayForecast = &forecasts[i]
+			break
+		}
+	}
+
+	if todayForecast == nil {
+		return
+	}
+
+	// Extract condition
+	narrative := ""
+	if todayForecast.Narrative.Valid {
+		narrative = todayForecast.Narrative.String
+	}
+	tempMax := 20.0
+	tempMin := 10.0
+	if todayForecast.TempMax.Valid {
+		tempMax = todayForecast.TempMax.Float64
+	}
+	if todayForecast.TempMin.Valid {
+		tempMin = todayForecast.TempMin.Float64
+	}
+
+	baseCondition := forecast.ExtractCondition(narrative, tempMax, tempMin)
+	condition := forecast.ConditionWithTime(baseCondition, tod)
+
+	// Check cache
+	if _, ok := s.imageCache.Get(condition); ok {
+		log.Printf("scheduler: weather image already cached for %s", condition)
+		return
+	}
+
+	// Generate in background
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+
+		log.Printf("scheduler: pre-generating weather image for %s", condition)
+		data, err := s.imageGen.Generate(ctx, baseCondition, tod, now)
+		if err != nil {
+			log.Printf("scheduler: image generation failed: %v", err)
+			return
+		}
+
+		if err := s.imageCache.Set(condition, data); err != nil {
+			log.Printf("scheduler: failed to cache image: %v", err)
+			return
+		}
+		log.Printf("scheduler: cached weather image for %s", condition)
+	}()
 }
 
 func (s *Scheduler) ingestObservations() {

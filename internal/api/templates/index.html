@@ -25,10 +25,7 @@
         .location { font-size: 1.25rem; font-weight: 600; }
         .time { font-size: 0.85rem; color: #666; }
         
-        .hero {
-            text-align: center;
-            padding: 2rem 0 1rem;
-        }
+        /* .hero styles moved to bottom for background image support */
         .temp-now {
             font-size: 6rem;
             font-weight: 200;
@@ -201,6 +198,31 @@
             padding-top: 1rem;
             border-top: 1px solid #1a1a2e;
         }
+        
+        .hero {
+            position: relative;
+            text-align: center;
+            background-size: cover;
+            background-position: center top;
+            border-radius: 12px;
+            margin: 0 0 1rem;
+            padding: 2.5rem 1rem 1.5rem;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(to bottom, 
+                rgba(15, 15, 26, 0.2) 0%, 
+                rgba(15, 15, 26, 0.6) 50%,
+                rgba(15, 15, 26, 0.9) 100%);
+            border-radius: 12px;
+            z-index: 0;
+        }
+        .hero > * {
+            position: relative;
+            z-index: 1;
+        }
     </style>
 </head>
 <body>
@@ -213,6 +235,28 @@
         function toggleStations() {
             document.getElementById('stations-grid').classList.toggle('show');
         }
+        
+        // Load banner as background image for hero section
+        (function() {
+            var img = new Image();
+            img.onload = function() {
+                var hero = document.querySelector('.hero');
+                if (hero) {
+                    hero.style.backgroundImage = 'url(/weather-image)';
+                }
+            };
+            img.src = '/weather-image';
+        })();
+        
+        // Re-apply after HTMX swaps
+        document.body.addEventListener('htmx:afterSwap', function(e) {
+            if (e.detail.target.id === 'current') {
+                var hero = document.querySelector('.hero');
+                if (hero) {
+                    hero.style.backgroundImage = 'url(/weather-image)';
+                }
+            }
+        });
     </script>
 </body>
 </html>

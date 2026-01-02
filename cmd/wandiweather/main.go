@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/lox/wandiweather/internal/api"
+	"github.com/lox/wandiweather/internal/imagegen"
 	"github.com/lox/wandiweather/internal/ingest"
 	"github.com/lox/wandiweather/internal/models"
 	"github.com/lox/wandiweather/internal/store"
@@ -77,6 +78,14 @@ func main() {
 	pws := ingest.NewPWS(apiKey)
 	forecast := ingest.NewForecastClient(apiKey, wandiligongLat, wandiligongLon)
 	scheduler := ingest.NewScheduler(st, pws, forecast, stationIDs)
+
+	// Configure image generation for weather banners
+	imageCache := imagegen.NewCache("data/images")
+	if imageGen, err := imagegen.NewGenerator(); err != nil {
+		log.Printf("Image generation disabled: %v", err)
+	} else {
+		scheduler.SetImageGenerator(imageGen, imageCache)
+	}
 
 	if *backfill {
 		log.Println("backfilling 7-day observation history")

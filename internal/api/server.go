@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lox/wandiweather/internal/forecast"
+	"github.com/lox/wandiweather/internal/imagegen"
 	"github.com/lox/wandiweather/internal/models"
 	"github.com/lox/wandiweather/internal/store"
 )
@@ -22,9 +24,12 @@ import (
 var templateFS embed.FS
 
 type Server struct {
-	store  *store.Store
-	port   string
-	tmpl   *template.Template
+	store      *store.Store
+	port       string
+	tmpl       *template.Template
+	imageCache *imagegen.Cache
+	imageGen   *imagegen.Generator
+	genMu      sync.Mutex // Prevents concurrent generation of same image
 }
 
 func NewServer(store *store.Store, port string) *Server {
@@ -37,10 +42,21 @@ func NewServer(store *store.Store, port string) *Server {
 		},
 	}
 	tmpl := template.Must(template.New("").Funcs(funcs).ParseFS(templateFS, "templates/*.html"))
+
+	// Initialize image generator (optional - may not have API key)
+	var imageGen *imagegen.Generator
+	if gen, err := imagegen.NewGenerator(); err != nil {
+		log.Printf("Image generation disabled: %v", err)
+	} else {
+		imageGen = gen
+	}
+
 	return &Server{
-		store: store,
-		port:  port,
-		tmpl:  tmpl,
+		store:      store,
+		port:       port,
+		tmpl:       tmpl,
+		imageCache: imagegen.NewCache("data/images"),
+		imageGen:   imageGen,
 	}
 }
 
@@ -49,6 +65,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/accuracy", s.handleAccuracy)
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/weather-image", s.handleWeatherImage)
+	mux.HandleFunc("/weather-image/", s.handleWeatherImage)
 	mux.HandleFunc("/partials/current", s.handleCurrentPartial)
 	mux.HandleFunc("/partials/chart", s.handleChartPartial)
 	mux.HandleFunc("/partials/forecast", s.handleForecastPartial)
@@ -884,4 +902,133 @@ func buildGeneratedNarrative(day *ForecastDay) string {
 	}
 
 	return strings.Join(parts, " ")
+}
+
+// handleWeatherImage serves a weather-appropriate header image.
+// It checks cache first, generates on-demand if needed, and returns a placeholder while generating.
+func (s *Server) handleWeatherImage(w http.ResponseWriter, r *http.Request) {
+	// Get current weather condition and time of day
+	loc, _ := time.LoadLocation("Australia/Melbourne")
+	now := time.Now().In(loc)
+	tod := forecast.GetTimeOfDay(now)
+	baseCondition := s.getCurrentCondition()
+	condition := forecast.ConditionWithTime(baseCondition, tod)
+
+	// Try cache first
+	if data, ok := s.imageCache.Get(condition); ok {
+		s.serveBannerImage(w, data)
+		return
+	}
+
+	// Try any cached image as fallback
+	if data, ok := s.imageCache.GetAny(); ok {
+		// Trigger async generation for the correct condition
+		go s.generateAndCache(baseCondition, tod, now)
+		s.serveBannerImage(w, data)
+		return
+	}
+
+	// No cache at all - if we can generate, do it synchronously for first request
+	if s.imageGen != nil {
+		s.genMu.Lock()
+		// Double-check cache after acquiring lock
+		if data, ok := s.imageCache.Get(condition); ok {
+			s.genMu.Unlock()
+			s.serveBannerImage(w, data)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+		defer cancel()
+
+		log.Printf("Generating first banner image for condition: %s", condition)
+		data, err := s.imageGen.Generate(ctx, baseCondition, tod, now)
+		s.genMu.Unlock()
+
+		if err != nil {
+			log.Printf("Banner generation failed: %v", err)
+			http.Error(w, "Image generation failed", http.StatusServiceUnavailable)
+			return
+		}
+
+		if err := s.imageCache.Set(condition, data); err != nil {
+			log.Printf("Failed to cache banner: %v", err)
+		}
+
+		s.serveBannerImage(w, data)
+		return
+	}
+
+	// No generator and no cache - return 404
+	http.NotFound(w, r)
+}
+
+func (s *Server) serveBannerImage(w http.ResponseWriter, data []byte) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Write(data)
+}
+
+func (s *Server) generateAndCache(baseCondition forecast.WeatherCondition, tod forecast.TimeOfDay, t time.Time) {
+	if s.imageGen == nil {
+		return
+	}
+
+	condition := forecast.ConditionWithTime(baseCondition, tod)
+
+	s.genMu.Lock()
+	defer s.genMu.Unlock()
+
+	// Check if already cached
+	if _, ok := s.imageCache.Get(condition); ok {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	log.Printf("Background generating banner for condition: %s", condition)
+	data, err := s.imageGen.Generate(ctx, baseCondition, tod, t)
+	if err != nil {
+		log.Printf("Background banner generation failed: %v", err)
+		return
+	}
+
+	if err := s.imageCache.Set(condition, data); err != nil {
+		log.Printf("Failed to cache banner: %v", err)
+	}
+	log.Printf("Cached banner for condition: %s", condition)
+}
+
+// getCurrentCondition extracts the weather condition from today's forecast.
+func (s *Server) getCurrentCondition() forecast.WeatherCondition {
+	loc, _ := time.LoadLocation("Australia/Melbourne")
+	today := time.Now().In(loc)
+	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+
+	forecasts, err := s.store.GetLatestForecasts()
+	if err != nil {
+		return forecast.ConditionClearCool // Default fallback
+	}
+
+	// Check WU forecasts first
+	for _, fc := range forecasts["wu"] {
+		if fc.ValidDate.Format("2006-01-02") == todayDate.Format("2006-01-02") {
+			narrative := ""
+			if fc.Narrative.Valid {
+				narrative = fc.Narrative.String
+			}
+			tempMax := 20.0
+			tempMin := 10.0
+			if fc.TempMax.Valid {
+				tempMax = fc.TempMax.Float64
+			}
+			if fc.TempMin.Valid {
+				tempMin = fc.TempMin.Float64
+			}
+			return forecast.ExtractCondition(narrative, tempMax, tempMin)
+		}
+	}
+
+	return forecast.ConditionClearCool
 }
