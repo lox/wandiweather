@@ -8,11 +8,12 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db  *sql.DB
+	loc *time.Location
 }
 
-func New(db *sql.DB) *Store {
-	return &Store{db: db}
+func New(db *sql.DB, loc *time.Location) *Store {
+	return &Store{db: db, loc: loc}
 }
 
 func (s *Store) UpsertStation(st models.Station) error {
@@ -664,10 +665,9 @@ func (s *Store) UpdateNowcastActualMax(stationID string, date time.Time, actualM
 }
 
 func (s *Store) GetMorningObservations(stationID string, date time.Time) ([]models.Observation, error) {
-	loc, _ := time.LoadLocation("Australia/Melbourne")
-	localDate := date.In(loc)
-	morningStart := time.Date(localDate.Year(), localDate.Month(), localDate.Day(), 9, 0, 0, 0, loc)
-	morningEnd := time.Date(localDate.Year(), localDate.Month(), localDate.Day(), 11, 0, 0, 0, loc)
+	localDate := date.In(s.loc)
+	morningStart := time.Date(localDate.Year(), localDate.Month(), localDate.Day(), 9, 0, 0, 0, s.loc)
+	morningEnd := time.Date(localDate.Year(), localDate.Month(), localDate.Day(), 11, 0, 0, 0, s.loc)
 
 	return s.GetObservations(stationID, morningStart.UTC(), morningEnd.UTC())
 }

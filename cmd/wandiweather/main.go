@@ -8,11 +8,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/lox/wandiweather/internal/api"
-	"github.com/lox/wandiweather/internal/imagegen"
 	"github.com/lox/wandiweather/internal/ingest"
 	"github.com/lox/wandiweather/internal/models"
 	"github.com/lox/wandiweather/internal/store"
@@ -62,7 +62,14 @@ func main() {
 	db.Exec("PRAGMA journal_mode=WAL")
 	db.Exec("PRAGMA busy_timeout=5000")
 
-	st := store.New(db)
+	// Load timezone once at startup
+	loc, err := time.LoadLocation("Australia/Melbourne")
+	if err != nil {
+		log.Printf("Warning: could not load Australia/Melbourne timezone, using UTC: %v", err)
+		loc = time.UTC
+	}
+
+	st := store.New(db, loc)
 	if err := st.Migrate(); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
@@ -77,14 +84,12 @@ func main() {
 
 	pws := ingest.NewPWS(apiKey)
 	forecast := ingest.NewForecastClient(apiKey, wandiligongLat, wandiligongLon)
-	scheduler := ingest.NewScheduler(st, pws, forecast, stationIDs)
+	scheduler := ingest.NewScheduler(st, pws, forecast, stationIDs, loc)
+	server := api.NewServer(st, *port, loc)
 
-	// Configure image generation for weather banners
-	imageCache := imagegen.NewCache("data/images")
-	if imageGen, err := imagegen.NewGenerator(); err != nil {
-		log.Printf("Image generation disabled: %v", err)
-	} else {
-		scheduler.SetImageGenerator(imageGen, imageCache)
+	// Configure image generation for weather banners, sharing mutex with server
+	if gen := server.ImageGenerator(); gen != nil {
+		scheduler.SetImageGenerator(gen, server.ImageCache(), server.ImageGenMutex())
 	}
 
 	if *backfill {
@@ -133,7 +138,6 @@ func main() {
 		log.Println("polling disabled (--no-poll)")
 	}
 
-	server := api.NewServer(st, *port)
 	log.Printf("starting server on :%s", *port)
 	if err := server.Run(ctx); err != nil {
 		log.Fatalf("server: %v", err)

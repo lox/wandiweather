@@ -26,13 +26,14 @@ var templateFS embed.FS
 type Server struct {
 	store      *store.Store
 	port       string
+	loc        *time.Location
 	tmpl       *template.Template
 	imageCache *imagegen.Cache
 	imageGen   *imagegen.Generator
 	genMu      sync.Mutex // Prevents concurrent generation of same image
 }
 
-func NewServer(store *store.Store, port string) *Server {
+func NewServer(store *store.Store, port string, loc *time.Location) *Server {
 	funcs := template.FuncMap{
 		"deref": func(f *float64) float64 {
 			if f == nil {
@@ -54,10 +55,27 @@ func NewServer(store *store.Store, port string) *Server {
 	return &Server{
 		store:      store,
 		port:       port,
+		loc:        loc,
 		tmpl:       tmpl,
 		imageCache: imagegen.NewCache("data/images"),
 		imageGen:   imageGen,
 	}
+}
+
+// ImageGenerator returns the image generator for use by the scheduler.
+func (s *Server) ImageGenerator() *imagegen.Generator {
+	return s.imageGen
+}
+
+// ImageCache returns the image cache for use by the scheduler.
+func (s *Server) ImageCache() *imagegen.Cache {
+	return s.imageCache
+}
+
+// ImageGenMutex returns a pointer to the image generation mutex for coordinating
+// between the HTTP handler and scheduler to prevent duplicate API calls.
+func (s *Server) ImageGenMutex() *sync.Mutex {
+	return &s.genMu
 }
 
 func (s *Server) Handler() http.Handler {
@@ -222,7 +240,7 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 		}
 	}
 
-	loc, _ := time.LoadLocation("Australia/Melbourne")
+	loc := s.loc
 	today := time.Now().In(loc)
 	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
 
@@ -250,7 +268,7 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 	forecasts, err := s.store.GetLatestForecasts()
 	if err == nil {
 		correctionStats, _ := s.store.GetAllCorrectionStats()
-		nowcaster := forecast.NewNowcaster(s.store)
+		nowcaster := forecast.NewNowcaster(s.store, s.loc)
 		biasCorrector := forecast.NewBiasCorrector(s.store)
 
 		var primaryStationID string
@@ -506,7 +524,7 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 		log.Printf("get correction stats: %v", err)
 	}
 
-	loc, _ := time.LoadLocation("Australia/Melbourne")
+	loc := s.loc
 	today := time.Now().In(loc)
 	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
 
@@ -575,7 +593,7 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 		}
 	}
 
-	nowcaster := forecast.NewNowcaster(s.store)
+	nowcaster := forecast.NewNowcaster(s.store, s.loc)
 	biasCorrector := forecast.NewBiasCorrector(s.store)
 
 	var days []ForecastDay
@@ -908,7 +926,7 @@ func buildGeneratedNarrative(day *ForecastDay) string {
 // It checks cache first, generates on-demand if needed, and returns a placeholder while generating.
 func (s *Server) handleWeatherImage(w http.ResponseWriter, r *http.Request) {
 	// Get current weather condition and time of day
-	loc, _ := time.LoadLocation("Australia/Melbourne")
+	loc := s.loc
 	now := time.Now().In(loc)
 	tod := forecast.GetTimeOfDay(now)
 	baseCondition := s.getCurrentCondition()
@@ -931,9 +949,10 @@ func (s *Server) handleWeatherImage(w http.ResponseWriter, r *http.Request) {
 	// No cache at all - if we can generate, do it synchronously for first request
 	if s.imageGen != nil {
 		s.genMu.Lock()
+		defer s.genMu.Unlock()
+
 		// Double-check cache after acquiring lock
 		if data, ok := s.imageCache.Get(condition); ok {
-			s.genMu.Unlock()
 			s.serveBannerImage(w, data)
 			return
 		}
@@ -943,8 +962,6 @@ func (s *Server) handleWeatherImage(w http.ResponseWriter, r *http.Request) {
 
 		log.Printf("Generating first banner image for condition: %s", condition)
 		data, err := s.imageGen.Generate(ctx, baseCondition, tod, now)
-		s.genMu.Unlock()
-
 		if err != nil {
 			log.Printf("Banner generation failed: %v", err)
 			http.Error(w, "Image generation failed", http.StatusServiceUnavailable)
@@ -959,8 +976,9 @@ func (s *Server) handleWeatherImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// No generator and no cache - return 404
-	http.NotFound(w, r)
+	// No generator and no cache - return 503
+	log.Printf("weather-image: no generator and no cached images available")
+	http.Error(w, "Weather image service unavailable", http.StatusServiceUnavailable)
 }
 
 func (s *Server) serveBannerImage(w http.ResponseWriter, data []byte) {
@@ -1002,7 +1020,7 @@ func (s *Server) generateAndCache(baseCondition forecast.WeatherCondition, tod f
 
 // getCurrentCondition extracts the weather condition from today's forecast.
 func (s *Server) getCurrentCondition() forecast.WeatherCondition {
-	loc, _ := time.LoadLocation("Australia/Melbourne")
+	loc := s.loc
 	today := time.Now().In(loc)
 	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
 

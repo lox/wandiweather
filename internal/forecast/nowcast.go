@@ -27,10 +27,11 @@ type NowcastCorrection struct {
 
 type Nowcaster struct {
 	store *store.Store
+	loc   *time.Location
 }
 
-func NewNowcaster(s *store.Store) *Nowcaster {
-	return &Nowcaster{store: s}
+func NewNowcaster(s *store.Store, loc *time.Location) *Nowcaster {
+	return &Nowcaster{store: s, loc: loc}
 }
 
 func (n *Nowcaster) ComputeNowcast(
@@ -42,8 +43,7 @@ func (n *Nowcaster) ComputeNowcast(
 		return nil, nil
 	}
 
-	loc, _ := time.LoadLocation("Australia/Melbourne")
-	now := time.Now().In(loc)
+	now := time.Now().In(n.loc)
 
 	if now.Hour() < nowcastStartHour {
 		return nil, nil
@@ -94,8 +94,7 @@ func (n *Nowcaster) LogNowcast(stationID string, forecastMaxRaw float64, correct
 		return nil
 	}
 
-	loc, _ := time.LoadLocation("Australia/Melbourne")
-	today := time.Now().In(loc)
+	today := time.Now().In(n.loc)
 	dateOnly := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
 
 	log := store.NowcastLog{

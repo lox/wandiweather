@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func setupTestStore(t *testing.T) *store.Store {
+func setupTestStore(t *testing.T) (*store.Store, *time.Location) {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -22,17 +22,18 @@ func setupTestStore(t *testing.T) *store.Store {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	s := store.New(db)
+	loc := time.UTC
+	s := store.New(db, loc)
 	if err := s.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	return s
+	return s, loc
 }
 
 func TestHealthEndpoint(t *testing.T) {
 	t.Parallel()
-	s := setupTestStore(t)
-	srv := api.NewServer(s, "8080")
+	s, loc := setupTestStore(t)
+	srv := api.NewServer(s, "8080", loc)
 
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
@@ -50,8 +51,8 @@ func TestHealthEndpoint(t *testing.T) {
 
 func TestAccuracyPage_NoData(t *testing.T) {
 	t.Parallel()
-	s := setupTestStore(t)
-	srv := api.NewServer(s, "8080")
+	s, loc := setupTestStore(t)
+	srv := api.NewServer(s, "8080", loc)
 
 	req := httptest.NewRequest("GET", "/accuracy", nil)
 	w := httptest.NewRecorder()
@@ -75,7 +76,7 @@ func TestAccuracyPage_NoData(t *testing.T) {
 
 func TestAccuracyPage_WithData(t *testing.T) {
 	t.Parallel()
-	s := setupTestStore(t)
+	s, loc := setupTestStore(t)
 
 	s.UpsertStation(models.Station{
 		StationID:     "TEST1",
@@ -96,7 +97,7 @@ func TestAccuracyPage_WithData(t *testing.T) {
 		TempMin:       sql.NullFloat64{Float64: 15, Valid: true},
 	})
 
-	srv := api.NewServer(s, "8080")
+	srv := api.NewServer(s, "8080", loc)
 	req := httptest.NewRequest("GET", "/accuracy", nil)
 	w := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(w, req)
@@ -116,7 +117,7 @@ func TestAccuracyPage_WithData(t *testing.T) {
 
 func TestAccuracyPage_ChartPresent(t *testing.T) {
 	t.Parallel()
-	s := setupTestStore(t)
+	s, loc := setupTestStore(t)
 
 	s.UpsertStation(models.Station{
 		StationID:     "TEST1",
@@ -145,7 +146,7 @@ func TestAccuracyPage_ChartPresent(t *testing.T) {
 		})
 	}
 
-	srv := api.NewServer(s, "8080")
+	srv := api.NewServer(s, "8080", loc)
 	req := httptest.NewRequest("GET", "/accuracy", nil)
 	w := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(w, req)

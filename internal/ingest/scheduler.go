@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/lox/wandiweather/internal/forecast"
@@ -18,13 +19,15 @@ type Scheduler struct {
 	bom         *BOMClient
 	daily       *DailyJobs
 	stationIDs  []string
+	loc         *time.Location
 	obsInterval time.Duration
 	fcInterval  time.Duration
 	imageGen    *imagegen.Generator
 	imageCache  *imagegen.Cache
+	imageGenMu  *sync.Mutex // Shared with server to prevent duplicate API calls
 }
 
-func NewScheduler(store *store.Store, pws *PWS, forecast *ForecastClient, stationIDs []string) *Scheduler {
+func NewScheduler(store *store.Store, pws *PWS, forecast *ForecastClient, stationIDs []string, loc *time.Location) *Scheduler {
 	return &Scheduler{
 		store:       store,
 		pws:         pws,
@@ -32,15 +35,18 @@ func NewScheduler(store *store.Store, pws *PWS, forecast *ForecastClient, statio
 		bom:         NewBOMClient(""),
 		daily:       NewDailyJobs(store),
 		stationIDs:  stationIDs,
+		loc:         loc,
 		obsInterval: 5 * time.Minute,
 		fcInterval:  6 * time.Hour,
 	}
 }
 
 // SetImageGenerator configures the scheduler to pre-generate weather images after forecast ingestion.
-func (s *Scheduler) SetImageGenerator(gen *imagegen.Generator, cache *imagegen.Cache) {
+// The mutex should be shared with the HTTP server to coordinate generation and prevent duplicate API calls.
+func (s *Scheduler) SetImageGenerator(gen *imagegen.Generator, cache *imagegen.Cache, mu *sync.Mutex) {
 	s.imageGen = gen
 	s.imageCache = cache
+	s.imageGenMu = mu
 }
 
 func (s *Scheduler) Run(ctx context.Context) {
@@ -77,8 +83,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 
 func (s *Scheduler) runDailyJobsIfNeeded() {
 	now := time.Now()
-	loc, _ := time.LoadLocation("Australia/Melbourne")
-	localNow := now.In(loc)
+	localNow := now.In(s.loc)
 
 	if localNow.Hour() >= 6 && localNow.Hour() < 7 {
 		yesterday := localNow.AddDate(0, 0, -1)
@@ -156,8 +161,7 @@ func (s *Scheduler) ensureWeatherImage(forecasts []models.Forecast) {
 		return
 	}
 
-	loc, _ := time.LoadLocation("Australia/Melbourne")
-	now := time.Now().In(loc)
+	now := time.Now().In(s.loc)
 	todayDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	tod := forecast.GetTimeOfDay(now)
 
@@ -191,14 +195,24 @@ func (s *Scheduler) ensureWeatherImage(forecasts []models.Forecast) {
 	baseCondition := forecast.ExtractCondition(narrative, tempMax, tempMin)
 	condition := forecast.ConditionWithTime(baseCondition, tod)
 
-	// Check cache
+	// Check cache (quick check before spawning goroutine)
 	if _, ok := s.imageCache.Get(condition); ok {
 		log.Printf("scheduler: weather image already cached for %s", condition)
 		return
 	}
 
-	// Generate in background
+	// Generate in background with shared mutex
 	go func() {
+		if s.imageGenMu != nil {
+			s.imageGenMu.Lock()
+			defer s.imageGenMu.Unlock()
+		}
+
+		// Double-check cache after acquiring lock
+		if _, ok := s.imageCache.Get(condition); ok {
+			return
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 
