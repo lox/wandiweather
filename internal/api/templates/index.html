@@ -212,20 +212,24 @@
             position: relative;
             text-align: center;
             background-size: cover;
-            background-position: center top;
-            border-radius: 12px;
+            background-position: center center;
+            border-radius: 16px;
             margin: 0 0 1rem;
-            padding: 2.5rem 1rem 1.5rem;
+            padding: 4rem 1rem 2rem;
+            min-height: 280px;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
         }
         .hero::before {
             content: '';
             position: absolute;
             inset: 0;
             background: linear-gradient(to bottom, 
-                color-mix(in srgb, var(--bg) 20%, transparent) 0%, 
-                color-mix(in srgb, var(--bg) 60%, transparent) 50%,
-                color-mix(in srgb, var(--bg) 90%, transparent) 100%);
-            border-radius: 12px;
+                transparent 0%,
+                color-mix(in srgb, var(--bg) 30%, transparent) 50%,
+                color-mix(in srgb, var(--bg) 85%, transparent) 100%);
+            border-radius: 16px;
             z-index: 0;
         }
         .hero > * {
