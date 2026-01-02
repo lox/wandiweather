@@ -129,6 +129,13 @@ type CurrentData struct {
 	LastUpdated   time.Time
 }
 
+// IndexData wraps CurrentData with additional page-level data.
+type IndexData struct {
+	*CurrentData
+	Palette         forecast.Palette
+	WeatherOverride string // Optional override for testing (e.g., "storm_night")
+}
+
 type TodayForecast struct {
 	TempMax           float64
 	TempMin           float64
@@ -385,7 +392,32 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.tmpl.ExecuteTemplate(w, "index.html", data)
+
+	// Get current weather condition and time of day for palette
+	now := time.Now().In(s.loc)
+	tod := forecast.GetTimeOfDay(now)
+	condition := s.getCurrentCondition()
+
+	// Check for override query param: ?weather=storm_night
+	if override := r.URL.Query().Get("weather"); override != "" {
+		if overrideCond, overrideTod, ok := parseWeatherOverride(override); ok {
+			condition = overrideCond
+			tod = overrideTod
+		} else {
+			// Just condition, keep current time of day
+			condition = overrideCond
+		}
+	}
+
+	palette := forecast.GetPalette(condition, tod)
+
+	indexData := IndexData{
+		CurrentData:     data,
+		Palette:         palette,
+		WeatherOverride: r.URL.Query().Get("weather"),
+	}
+
+	s.tmpl.ExecuteTemplate(w, "index.html", indexData)
 }
 
 func (s *Server) handleCurrentPartial(w http.ResponseWriter, r *http.Request) {
@@ -926,12 +958,26 @@ func buildGeneratedNarrative(day *ForecastDay) string {
 
 // handleWeatherImage serves a weather-appropriate header image.
 // It checks cache first, generates on-demand if needed, and returns a placeholder while generating.
+// Supports ?weather=condition_time override for testing (e.g., ?weather=storm_night).
 func (s *Server) handleWeatherImage(w http.ResponseWriter, r *http.Request) {
 	// Get current weather condition and time of day
 	loc := s.loc
 	now := time.Now().In(loc)
 	tod := forecast.GetTimeOfDay(now)
 	baseCondition := s.getCurrentCondition()
+	hasOverride := false
+
+	// Check for override query param
+	if override := r.URL.Query().Get("weather"); override != "" {
+		hasOverride = true
+		if overrideCond, overrideTod, ok := parseWeatherOverride(override); ok {
+			baseCondition = overrideCond
+			tod = overrideTod
+		} else {
+			baseCondition = overrideCond
+		}
+	}
+
 	condition := forecast.ConditionWithTime(baseCondition, tod)
 
 	// Try cache first
@@ -940,15 +986,17 @@ func (s *Server) handleWeatherImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try any cached image as fallback
-	if data, ok := s.imageCache.GetAny(); ok {
-		// Trigger async generation for the correct condition
-		go s.generateAndCache(baseCondition, tod, now)
-		s.serveBannerImage(w, data)
-		return
+	// Try any cached image as fallback (but not when testing with override)
+	if !hasOverride {
+		if data, ok := s.imageCache.GetAny(); ok {
+			// Trigger async generation for the correct condition
+			go s.generateAndCache(baseCondition, tod, now)
+			s.serveBannerImage(w, data)
+			return
+		}
 	}
 
-	// No cache at all - if we can generate, do it synchronously for first request
+	// No cache - if we can generate, do it synchronously
 	if s.imageGen != nil {
 		s.genMu.Lock()
 		defer s.genMu.Unlock()
@@ -1018,6 +1066,27 @@ func (s *Server) generateAndCache(baseCondition forecast.WeatherCondition, tod f
 		log.Printf("Failed to cache banner: %v", err)
 	}
 	log.Printf("Cached banner for condition: %s", condition)
+}
+
+// parseWeatherOverride parses a "condition_time" string (e.g., "storm_night")
+// into separate condition and time-of-day values. Returns ok=false if not valid.
+func parseWeatherOverride(override string) (condition forecast.WeatherCondition, tod forecast.TimeOfDay, ok bool) {
+	if override == "" {
+		return "", "", false
+	}
+
+	// Try to split on known time suffixes
+	times := []forecast.TimeOfDay{forecast.TimeDawn, forecast.TimeDay, forecast.TimeDusk, forecast.TimeNight}
+	for _, t := range times {
+		suffix := "_" + string(t)
+		if strings.HasSuffix(override, suffix) {
+			cond := strings.TrimSuffix(override, suffix)
+			return forecast.WeatherCondition(cond), t, true
+		}
+	}
+
+	// No time suffix - treat whole string as condition
+	return forecast.WeatherCondition(override), "", false
 }
 
 // getCurrentCondition extracts the weather condition from today's forecast.
