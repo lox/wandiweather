@@ -1,0 +1,38 @@
+version: '3'
+
+tasks:
+  dev:
+    desc: Run local development server with hot reload (no API polling)
+    cmds:
+      - go run github.com/makiuchi-d/arelo@latest -p '**/*.go' -i '**/.*' -i '**/*_test.go' -- go run ./cmd/wandiweather --db data/wandiweather.db --no-poll
+
+  run:
+    desc: Run server with polling enabled
+    cmds:
+      - go run ./cmd/wandiweather --db data/wandiweather.db
+
+  build:
+    desc: Build the binary
+    cmds:
+      - go build -o wandiweather ./cmd/wandiweather
+
+  test:
+    desc: Run all tests
+    cmds:
+      - go test ./...
+
+  once:
+    desc: Run single ingestion and exit
+    cmds:
+      - go run ./cmd/wandiweather --db data/wandiweather.db --once
+
+  daily:
+    desc: Run daily jobs manually
+    cmds:
+      - go run ./cmd/wandiweather --db data/wandiweather.db --daily
+
+  pull-db:
+    desc: Pull production database from Fly.io
+    cmds:
+      - rm -f data/wandiweather.db data/wandiweather.db-shm data/wandiweather.db-wal
+      - fly sftp get /data/wandiweather.db data/wandiweather.db -a wandiweather

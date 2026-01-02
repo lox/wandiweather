@@ -565,6 +565,8 @@ func (s *Server) handleAPIForecast(w http.ResponseWriter, r *http.Request) {
 }
 
 type AccuracyData struct {
+	Source      string
+	SourceName  string
 	Stats       *models.VerificationStats
 	History     []VerificationRow
 	ChartLabels []string
@@ -600,12 +602,16 @@ func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
 	data := &AccuracyData{}
 
 	source := "wu"
+	sourceName := "Weather Underground"
 	if wuStats, ok := stats["wu"]; ok {
 		data.Stats = &wuStats
 	} else if bomStats, ok := stats["bom"]; ok {
 		data.Stats = &bomStats
 		source = "bom"
+		sourceName = "Bureau of Meteorology (Wangaratta)"
 	}
+	data.Source = source
+	data.SourceName = sourceName
 
 	history, err := s.store.GetVerificationHistory(source, 14)
 	if err != nil {
