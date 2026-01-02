@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Forecast Accuracy - WandiWeather</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -155,6 +156,15 @@
         </div>
         {{end}}
         
+        {{if .ChartLabels}}
+        <div class="section-title">Bias Over Time</div>
+        <div class="stats-card">
+            <div class="chart-container" style="height: 200px;">
+                <canvas id="biasChart"></canvas>
+            </div>
+        </div>
+        {{end}}
+        
         {{if .History}}
         <div class="section-title">Daily Verification</div>
         <div class="table-wrap">
@@ -185,5 +195,75 @@
             <a href="/">WandiWeather</a> · Verification since Dec 2024
         </div>
     </div>
+    {{if .ChartLabels}}
+    <script>
+    (function() {
+        const ctx = document.getElementById('biasChart').getContext('2d');
+        const labels = [{{range $i, $l := .ChartLabels}}{{if $i}},{{end}}"{{$l}}"{{end}}];
+        const maxData = [{{range $i, $v := .ChartMax}}{{if $i}},{{end}}{{printf "%.1f" $v}}{{end}}];
+        const minData = [{{range $i, $v := .ChartMin}}{{if $i}},{{end}}{{printf "%.1f" $v}}{{end}}];
+        
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Max Temp Bias',
+                        data: maxData,
+                        backgroundColor: maxData.map(v => v > 0 ? '#ff704388' : '#4fc3f788'),
+                        borderColor: maxData.map(v => v > 0 ? '#ff7043' : '#4fc3f7'),
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Min Temp Bias',
+                        data: minData,
+                        backgroundColor: minData.map(v => v > 0 ? '#ff704344' : '#4fc3f744'),
+                        borderColor: minData.map(v => v > 0 ? '#ff7043' : '#4fc3f7'),
+                        borderWidth: 1,
+                        borderDash: [2, 2]
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: { color: '#888', boxWidth: 12 }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return context.dataset.label + ': ' + (context.raw > 0 ? '+' : '') + context.raw.toFixed(1) + '°C';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#888' },
+                        grid: { color: '#1f4068' }
+                    },
+                    y: {
+                        ticks: {
+                            color: '#888',
+                            callback: function(value) { return (value > 0 ? '+' : '') + value + '°'; }
+                        },
+                        grid: { color: '#1f4068' },
+                        title: {
+                            display: true,
+                            text: 'Forecast - Actual',
+                            color: '#666'
+                        }
+                    }
+                }
+            }
+        });
+    })();
+    </script>
+    {{end}}
 </body>
 </html>

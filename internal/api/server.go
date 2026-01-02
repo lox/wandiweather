@@ -35,9 +35,8 @@ func NewServer(store *store.Store, port string) *Server {
 	}
 }
 
-func (s *Server) Run(ctx context.Context) error {
+func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/accuracy", s.handleAccuracy)
 	mux.HandleFunc("/health", s.handleHealth)
@@ -48,10 +47,13 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/history", s.handleAPIHistory)
 	mux.HandleFunc("/api/stations", s.handleAPIStations)
 	mux.HandleFunc("/api/forecast", s.handleAPIForecast)
+	return mux
+}
 
+func (s *Server) Run(ctx context.Context) error {
 	server := &http.Server{
 		Addr:    ":" + s.port,
-		Handler: mux,
+		Handler: s.Handler(),
 	}
 
 	go func() {
@@ -563,8 +565,11 @@ func (s *Server) handleAPIForecast(w http.ResponseWriter, r *http.Request) {
 }
 
 type AccuracyData struct {
-	Stats   *models.VerificationStats
-	History []VerificationRow
+	Stats       *models.VerificationStats
+	History     []VerificationRow
+	ChartLabels []string
+	ChartMax    []float64
+	ChartMin    []float64
 }
 
 type VerificationRow struct {
@@ -594,11 +599,15 @@ func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
 
 	data := &AccuracyData{}
 
+	source := "wu"
 	if wuStats, ok := stats["wu"]; ok {
 		data.Stats = &wuStats
+	} else if bomStats, ok := stats["bom"]; ok {
+		data.Stats = &bomStats
+		source = "bom"
 	}
 
-	history, err := s.store.GetVerificationHistory("wu", 14)
+	history, err := s.store.GetVerificationHistory(source, 14)
 	if err != nil {
 		log.Printf("get history: %v", err)
 	}
@@ -608,6 +617,21 @@ func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
 			row.MaxBiasClass = biasClass(v.BiasTempMax.Float64)
 		}
 		data.History = append(data.History, row)
+	}
+
+	for i := len(history) - 1; i >= 0; i-- {
+		v := history[i]
+		data.ChartLabels = append(data.ChartLabels, v.ValidDate.Format("Jan 2"))
+		if v.BiasTempMax.Valid {
+			data.ChartMax = append(data.ChartMax, v.BiasTempMax.Float64)
+		} else {
+			data.ChartMax = append(data.ChartMax, 0)
+		}
+		if v.BiasTempMin.Valid {
+			data.ChartMin = append(data.ChartMin, v.BiasTempMin.Float64)
+		} else {
+			data.ChartMin = append(data.ChartMin, 0)
+		}
 	}
 
 	s.tmpl.ExecuteTemplate(w, "accuracy.html", data)
