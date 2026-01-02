@@ -4,7 +4,7 @@ tasks:
   dev:
     desc: Run local development server with hot reload (no API polling)
     cmds:
-      - go run github.com/makiuchi-d/arelo@latest -p '**/*.go' -i '**/.*' -i '**/*_test.go' -- go run ./cmd/wandiweather --db data/wandiweather.db --no-poll
+      - go run github.com/makiuchi-d/arelo@latest -p '**/*.go' -p '**/*.html' -i '**/.*' -i '**/*_test.go' -- go run ./cmd/wandiweather --db data/wandiweather.db --no-poll
 
   run:
     desc: Run server with polling enabled

@@ -101,25 +101,34 @@
         
 
         
+        .forecast-section {
+            display: block;
+            width: 100%;
+            max-width: 100%;
+            margin-top: 1.5rem;
+        }
+        .forecast-section > * {
+            width: 100%;
+        }
         .section-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-top: 2rem;
             margin-bottom: 0.75rem;
         }
-        .section-title { font-size: 0.8rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
+        .section-title { font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
         
         .forecast-week {
             display: grid;
-            grid-template-columns: repeat(7, 1fr);
+            grid-template-columns: repeat(5, 1fr);
             gap: 0.5rem;
         }
         .forecast-day {
             background: #1a1a2e;
             border-radius: 10px;
-            padding: 0.75rem 0.5rem;
+            padding: 1rem 0.5rem;
             text-align: center;
+            min-width: 0;
         }
         .forecast-day.today { border: 1px solid #4fc3f7; }
         .day-name { font-size: 0.75rem; color: #888; }

@@ -504,7 +504,7 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 	}
 
 	var days []ForecastDay
-	for i := 0; i < 7; i++ {
+	for i := 0; i < 5; i++ {
 		date := todayDate.AddDate(0, 0, i)
 		key := date.Format("2006-01-02")
 		if day, ok := dayMap[key]; ok {
