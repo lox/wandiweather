@@ -165,19 +165,17 @@ func (d *DailyJobs) VerifyForecasts(forDate time.Time) error {
 		}
 	}
 
-	forecasts, err := d.store.GetForecastsForDate(forDate)
+	// Use GetVerificationForecasts which returns earliest forecast per (source, day_of_forecast)
+	// fetched before the valid date started. This ensures we verify advance predictions,
+	// not same-day adjustments, and captures complete data (e.g., BOM min temps).
+	forecasts, err := d.store.GetVerificationForecasts(forDate)
 	if err != nil {
 		return err
 	}
 
-	seen := make(map[string]bool)
 	verified := 0
 	for _, fc := range forecasts {
-		if seen[fc.Source] {
-			continue
-		}
-		seen[fc.Source] = true
-
+		// Each forecast is already unique per (source, day_of_forecast) from the query
 		v := models.ForecastVerification{
 			ForecastID:     fc.ID,
 			ValidDate:      forDate,
@@ -221,10 +219,9 @@ func (d *DailyJobs) VerifyForecasts(forDate time.Time) error {
 			continue
 		}
 
-		log.Printf("daily: verified %s forecast for %s: temp bias=%.1f/%.1f°C, wind bias=%.1f km/h, precip bias=%.1fmm",
-			fc.Source, forDate.Format("2006-01-02"),
-			v.BiasTempMax.Float64, v.BiasTempMin.Float64,
-			v.BiasWind.Float64, v.BiasPrecip.Float64)
+		log.Printf("daily: verified %s day-%d forecast for %s: temp bias=%.1f/%.1f°C",
+			fc.Source, fc.DayOfForecast, forDate.Format("2006-01-02"),
+			v.BiasTempMax.Float64, v.BiasTempMin.Float64)
 		verified++
 	}
 
@@ -260,6 +257,12 @@ func (d *DailyJobs) BackfillSummaries() error {
 
 func (d *DailyJobs) BackfillVerification() error {
 	log.Println("daily: backfilling forecast verification")
+
+	// Clear existing verification to re-run with updated methodology
+	if err := d.store.ClearVerification(); err != nil {
+		return fmt.Errorf("clear verification: %w", err)
+	}
+	log.Println("daily: cleared existing verification records")
 
 	primary, err := d.store.GetPrimaryStation()
 	if err != nil {

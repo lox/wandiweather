@@ -298,6 +298,50 @@ func (s *Store) GetForecastsForDate(validDate time.Time) ([]models.Forecast, err
 	return forecasts, rows.Err()
 }
 
+// GetVerificationForecasts returns the earliest forecast for each (source, day_of_forecast) combination
+// that was fetched before the valid date started. This ensures we verify against advance predictions,
+// not same-day adjustments, and captures complete data (e.g., BOM min temps before they're dropped).
+func (s *Store) GetVerificationForecasts(validDate time.Time) ([]models.Forecast, error) {
+	dateStr := validDate.Format("2006-01-02")
+	// Cut-off: start of valid date in local time, converted to UTC for comparison
+	cutoff := time.Date(validDate.Year(), validDate.Month(), validDate.Day(), 0, 0, 0, 0, s.loc).UTC()
+
+	rows, err := s.db.Query(`
+		SELECT f.id, f.source, f.fetched_at, f.valid_date, f.day_of_forecast, 
+		       f.temp_max, f.temp_min, f.humidity, f.precip_chance, f.precip_amount, 
+		       f.wind_speed, f.wind_dir, f.narrative
+		FROM forecasts f
+		INNER JOIN (
+			SELECT source, day_of_forecast, MIN(fetched_at) as first_fetch
+			FROM forecasts
+			WHERE SUBSTR(valid_date, 1, 10) = ?
+			  AND fetched_at < ?
+			  AND temp_max IS NOT NULL
+			GROUP BY source, day_of_forecast
+		) sel ON f.source = sel.source 
+		     AND f.day_of_forecast = sel.day_of_forecast 
+		     AND f.fetched_at = sel.first_fetch
+		WHERE SUBSTR(f.valid_date, 1, 10) = ?
+		ORDER BY f.source, f.day_of_forecast
+	`, dateStr, cutoff, dateStr)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var forecasts []models.Forecast
+	for rows.Next() {
+		var f models.Forecast
+		if err := rows.Scan(&f.ID, &f.Source, &f.FetchedAt, &f.ValidDate, &f.DayOfForecast,
+			&f.TempMax, &f.TempMin, &f.Humidity, &f.PrecipChance, &f.PrecipAmount,
+			&f.WindSpeed, &f.WindDir, &f.Narrative); err != nil {
+			return nil, err
+		}
+		forecasts = append(forecasts, f)
+	}
+	return forecasts, rows.Err()
+}
+
 type DayActuals struct {
 	TempMax   sql.NullFloat64
 	TempMin   sql.NullFloat64
@@ -341,6 +385,11 @@ func (s *Store) HasVerificationForDate(validDate time.Time) (bool, error) {
 	dateStr := validDate.Format("2006-01-02")
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM forecast_verification WHERE SUBSTR(valid_date, 1, 10) = ?`, dateStr).Scan(&count)
 	return count > 0, err
+}
+
+func (s *Store) ClearVerification() error {
+	_, err := s.db.Exec(`DELETE FROM forecast_verification`)
+	return err
 }
 
 func (s *Store) GetPrimaryStation() (*models.Station, error) {
@@ -517,6 +566,45 @@ func (s *Store) GetVerificationStats() (map[string]models.VerificationStats, err
 	return result, rows.Err()
 }
 
+// GetDay1VerificationStats returns stats for day-1 (next-day) forecasts only, grouped by source.
+// This is the most meaningful comparison between forecast sources.
+func (s *Store) GetDay1VerificationStats() (map[string]models.VerificationStats, error) {
+	rows, err := s.db.Query(`
+		SELECT 
+			f.source,
+			COUNT(DISTINCT SUBSTR(v.valid_date, 1, 10)) as count,
+			AVG(v.bias_temp_max) as avg_max_bias,
+			AVG(v.bias_temp_min) as avg_min_bias,
+			AVG(ABS(v.bias_temp_max)) as mae_max,
+			AVG(ABS(v.bias_temp_min)) as mae_min,
+			AVG(v.bias_wind) as avg_wind_bias,
+			AVG(ABS(v.bias_wind)) as mae_wind,
+			AVG(v.bias_precip) as avg_precip_bias,
+			AVG(ABS(v.bias_precip)) as mae_precip
+		FROM forecast_verification v
+		JOIN forecasts f ON v.forecast_id = f.id
+		WHERE v.bias_temp_max IS NOT NULL AND f.day_of_forecast = 1
+		GROUP BY f.source
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]models.VerificationStats)
+	for rows.Next() {
+		var source string
+		var stats models.VerificationStats
+		if err := rows.Scan(&source, &stats.Count, &stats.AvgMaxBias, &stats.AvgMinBias,
+			&stats.MAEMax, &stats.MAEMin, &stats.AvgWindBias, &stats.MAEWind,
+			&stats.AvgPrecipBias, &stats.MAEPrecip); err != nil {
+			return nil, err
+		}
+		result[source] = stats
+	}
+	return result, rows.Err()
+}
+
 func (s *Store) GetVerificationHistory(source string, limit int) ([]models.ForecastVerification, error) {
 	rows, err := s.db.Query(`
 		SELECT v.id, v.forecast_id, v.valid_date, v.forecast_temp_max, v.forecast_temp_min,
@@ -540,6 +628,75 @@ func (s *Store) GetVerificationHistory(source string, limit int) ([]models.Forec
 			return nil, err
 		}
 		results = append(results, v)
+	}
+	return results, rows.Err()
+}
+
+// VerificationHistoryRow includes source and lead time info for display
+type VerificationHistoryRow struct {
+	models.ForecastVerification
+	Source        string
+	DayOfForecast int
+}
+
+// GetDay1VerificationHistory returns day-1 verification records for all sources, one per date per source
+func (s *Store) GetDay1VerificationHistory(limit int) ([]VerificationHistoryRow, error) {
+	rows, err := s.db.Query(`
+		SELECT v.id, v.forecast_id, v.valid_date, v.forecast_temp_max, v.forecast_temp_min,
+		       v.actual_temp_max, v.actual_temp_min, v.bias_temp_max, v.bias_temp_min, v.created_at,
+		       f.source, f.day_of_forecast
+		FROM forecast_verification v
+		JOIN forecasts f ON v.forecast_id = f.id
+		WHERE v.bias_temp_max IS NOT NULL AND f.day_of_forecast = 1
+		ORDER BY v.valid_date DESC, f.source
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []VerificationHistoryRow
+	for rows.Next() {
+		var r VerificationHistoryRow
+		if err := rows.Scan(&r.ID, &r.ForecastID, &r.ValidDate, &r.ForecastTempMax, &r.ForecastTempMin,
+			&r.ActualTempMax, &r.ActualTempMin, &r.BiasTempMax, &r.BiasTempMin, &r.CreatedAt,
+			&r.Source, &r.DayOfForecast); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+// GetBestLeadVerificationHistory returns the best available lead time for each source:
+// D+1 for WU, D+2 for BOM (since BOM doesn't reliably have D+1 before cutoff)
+func (s *Store) GetBestLeadVerificationHistory(limit int) ([]VerificationHistoryRow, error) {
+	rows, err := s.db.Query(`
+		SELECT v.id, v.forecast_id, v.valid_date, v.forecast_temp_max, v.forecast_temp_min,
+		       v.actual_temp_max, v.actual_temp_min, v.bias_temp_max, v.bias_temp_min, v.created_at,
+		       f.source, f.day_of_forecast
+		FROM forecast_verification v
+		JOIN forecasts f ON v.forecast_id = f.id
+		WHERE v.bias_temp_max IS NOT NULL 
+		  AND ((f.source = 'wu' AND f.day_of_forecast = 1) OR (f.source = 'bom' AND f.day_of_forecast = 2))
+		ORDER BY v.valid_date DESC, f.source
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []VerificationHistoryRow
+	for rows.Next() {
+		var r VerificationHistoryRow
+		if err := rows.Scan(&r.ID, &r.ForecastID, &r.ValidDate, &r.ForecastTempMax, &r.ForecastTempMin,
+			&r.ActualTempMax, &r.ActualTempMin, &r.BiasTempMax, &r.BiasTempMin, &r.CreatedAt,
+			&r.Source, &r.DayOfForecast); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
 	}
 	return results, rows.Err()
 }

@@ -1,6 +1,6 @@
 # WandiWeather Research Summary
 
-> **Last updated**: January 1, 2026
+> **Last updated**: January 3, 2026
 
 ## Key Findings
 
@@ -68,12 +68,13 @@ Valley floor inversions observed but weaker than expected:
 
 **Why bias correction needed**: GRAF doesn't account for valley cold air drainage, local inversions, or sheltered microclimate effects.
 
-### BOM Data (discontinued)
+### BOM Forecast API ✅
 
-BOM forecasts for Wangaratta were tested Dec 26-27 but discontinued:
-- FTP access: `ftp://ftp.bom.gov.au/anon/gen/fwo/IDV10753.xml`
-- 35km from Wandiligong - too distant for accurate local forecasts
-- Initial data showed -2.2°C max bias, +3.4°C min bias
+**FTP Access**: `ftp://ftp.bom.gov.au/anon/gen/fwo/IDV10753.xml`
+
+Uses Wangaratta forecast (35km from Wandiligong). Initially discontinued Dec 27 but reactivated for comparison.
+
+**Key behavior**: BOM drops min temp from forecast once the day starts (overnight min has already occurred). Verification must use day-before snapshot.
 
 ---
 
@@ -101,6 +102,17 @@ SQLite with WAL mode. Schema version 6 includes:
 - `forecasts`: WU forecast snapshots (with `source` field for future multi-source)
 - `daily_summaries`: Computed daily stats with inversion detection
 - `forecast_verification`: Bias tracking with wind and precip fields
+
+### Forecast Verification Methodology
+
+**Lock-in rule**: For valid date D, verify forecasts fetched before start of day D (local time).
+
+**Why**: 
+- BOM drops min temp once the day starts
+- WU adjusts forecasts throughout the day (same-day "nowcasting")
+- Using day-before forecasts measures true advance prediction skill
+
+**Lead times**: Verify separately by `day_of_forecast` (1-day, 2-day, 3-day ahead) to track how accuracy degrades with lead time.
 
 ### API Implementation
 

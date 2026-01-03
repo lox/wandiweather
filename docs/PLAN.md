@@ -1,6 +1,6 @@
 # WandiWeather Implementation Plan
 
-> **Last updated**: January 1, 2026
+> **Last updated**: January 3, 2026
 
 ## Vision
 
@@ -24,15 +24,18 @@ A hyperlocal weather service for Wandiligong/Bright that provides:
 ### ✅ Phase 2: Daily Processing (COMPLETE)
 - Daily summary computation with min/max/avg
 - Inversion detection (valley vs upper overnight temps)
-- Forecast verification (WU vs actuals)
+- Forecast verification with proper lock-in methodology:
+  - Uses day-before forecasts (fetched before valid date starts)
+  - Verifies by lead time (1-day, 2-day ahead separately)
+  - Both WU and BOM sources verified
 - Automated daily jobs at 6am Melbourne time
 - CLI flags: `--daily`, `--backfill-daily`
 
 ### 🔄 Phase 3: Forecast Correction (IN PROGRESS)
-- 6 days of verification data collected (Dec 26-31)
-- Initial findings (6 days, summer hot spell):
-  - WU: -6.0°C bias on max temps, -0.5°C on mins (MAE 6.0/0.8)
-  - BOM: -2.2°C bias on max temps, +3.4°C on mins (MAE 3.5/3.8)
+- Verification data being collected (WU and BOM)
+- Initial findings (hot spell conditions, both sources under-predict):
+  - WU: ~-6°C bias on max temps during heat
+  - BOM: ~-4°C bias on max temps (closer than WU)
 - Level 0 bias correction implemented and active
 - Three-level correction strategy planned (see Phase 3 details)
 

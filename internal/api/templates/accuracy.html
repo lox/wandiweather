@@ -48,18 +48,74 @@
             border-radius: 10px;
             padding: 1rem;
         }
-        .stats-grid {
+        
+        .source-compare {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: 1fr 1fr;
             gap: 1rem;
         }
-        .stat-box { text-align: center; }
-        .stat-value { font-size: 2rem; font-weight: 300; }
+        .source-box {
+            text-align: center;
+            padding: 0.75rem;
+            background: #121227;
+            border-radius: 8px;
+        }
+        .source-label {
+            font-size: 0.7rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+        }
+        .source-label.wu { color: #4fc3f7; }
+        .source-label.bom { color: #ff7043; }
+        
+        .stat-value { font-size: 1.75rem; font-weight: 300; }
         .stat-value.good { color: #4ecdc4; }
         .stat-value.warn { color: #ffd93d; }
-        .stat-label { font-size: 0.75rem; color: #666; margin-top: 0.25rem; }
-        .stat-sublabel { font-size: 0.7rem; color: #555; }
+        .stat-value.bad { color: #ff7043; }
+        .stat-label { font-size: 0.7rem; color: #666; margin-top: 0.25rem; }
+        .stat-sublabel { font-size: 0.65rem; color: #555; }
         .stat-count { font-size: 0.75rem; color: #555; margin-top: 1rem; text-align: center; }
+        
+        .stat-row {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 0.75rem;
+        }
+        .stat-mini {
+            text-align: center;
+        }
+        .stat-mini .value {
+            font-size: 1.1rem;
+            font-weight: 400;
+        }
+        .stat-mini .label {
+            font-size: 0.6rem;
+            color: #555;
+        }
+        
+        .lead-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+            margin-top: 0.5rem;
+        }
+        .lead-table th {
+            text-align: center;
+            color: #666;
+            font-weight: 500;
+            padding: 0.4rem;
+            border-bottom: 1px solid #2a2a4e;
+        }
+        .lead-table th.wu { color: #4fc3f7; }
+        .lead-table th.bom { color: #ff7043; }
+        .lead-table td {
+            padding: 0.4rem;
+            text-align: center;
+            border-bottom: 1px solid #1a1a2e;
+        }
+        .lead-table .lead { color: #888; text-align: left; }
         
         .history-table {
             width: 100%;
@@ -78,6 +134,9 @@
             border-bottom: 1px solid #1a1a2e;
         }
         .history-table .date { color: #888; }
+        .history-table .source { font-size: 0.7rem; text-transform: uppercase; }
+        .history-table .source.wu { color: #4fc3f7; }
+        .history-table .source.bom { color: #ff7043; }
         .history-table .actual { color: #eee; }
         .history-table .forecast { color: #888; }
         .history-table .bias { font-weight: 500; }
@@ -100,6 +159,11 @@
             border-top: 1px solid #1a1a2e;
         }
         .footer a { color: #4fc3f7; text-decoration: none; }
+        
+        .no-data {
+            color: #555;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -111,44 +175,56 @@
         
         <div class="intro">
             <p>
-                We compare <strong>{{.SourceName}}</strong> forecasts against actual observations 
-                from local weather stations in the Wandiligong valley. This helps track 
-                how well the forecasts perform for our specific microclimate.
+                Comparing <strong>Weather Underground</strong> (WU) and <strong>BOM</strong> next-day forecasts 
+                against actual observations from local weather stations in the Wandiligong valley.
             </p>
         </div>
         
-        {{if .Stats}}
-        <div class="section-title">Temperature Accuracy</div>
+        {{if or .WUStats .BOMStats}}
+        <div class="section-title">Forecast Accuracy Comparison</div>
         <div class="stats-card">
-            <div class="stats-grid">
-                <div class="stat-box">
-                    <div class="stat-value {{if le .Stats.MAEMax.Float64 2.0}}good{{else}}warn{{end}}">±{{printf "%.1f" .Stats.MAEMax.Float64}}°</div>
+            <div class="source-compare">
+                {{if .WUStats}}
+                <div class="source-box">
+                    <div class="source-label wu">WU (D+1)</div>
+                    <div class="stat-value {{if le .WUStats.MAEMax.Float64 3.0}}warn{{else}}bad{{end}}">±{{printf "%.1f" .WUStats.MAEMax.Float64}}°</div>
                     <div class="stat-label">Max temp error</div>
-                    <div class="stat-sublabel">avg {{printf "%+.1f" .Stats.AvgMaxBias.Float64}}° bias</div>
+                    <div class="stat-sublabel">avg {{printf "%+.1f" .WUStats.AvgMaxBias.Float64}}° bias</div>
+                    <div class="stat-row">
+                        <div class="stat-mini">
+                            <div class="value {{if le .WUStats.MAEMin.Float64 2.0}}good{{else}}warn{{end}}">±{{printf "%.1f" .WUStats.MAEMin.Float64}}°</div>
+                            <div class="label">Min error</div>
+                        </div>
+                    </div>
                 </div>
-                <div class="stat-box">
-                    <div class="stat-value {{if le .Stats.MAEMin.Float64 2.0}}good{{else}}warn{{end}}">±{{printf "%.1f" .Stats.MAEMin.Float64}}°</div>
-                    <div class="stat-label">Min temp error</div>
-                    <div class="stat-sublabel">avg {{printf "%+.1f" .Stats.AvgMinBias.Float64}}° bias</div>
+                {{else}}
+                <div class="source-box">
+                    <div class="source-label wu">WU (D+1)</div>
+                    <div class="no-data">No data</div>
                 </div>
+                {{end}}
+                
+                {{if .BOMStats}}
+                <div class="source-box">
+                    <div class="source-label bom">BOM (D+2)</div>
+                    <div class="stat-value {{if le .BOMStats.MAEMax.Float64 3.0}}warn{{else}}bad{{end}}">±{{printf "%.1f" .BOMStats.MAEMax.Float64}}°</div>
+                    <div class="stat-label">Max temp error</div>
+                    <div class="stat-sublabel">avg {{printf "%+.1f" .BOMStats.AvgMaxBias.Float64}}° bias</div>
+                    <div class="stat-row">
+                        <div class="stat-mini">
+                            <div class="value {{if le .BOMStats.MAEMin.Float64 2.0}}good{{else}}warn{{end}}">±{{printf "%.1f" .BOMStats.MAEMin.Float64}}°</div>
+                            <div class="label">Min error</div>
+                        </div>
+                    </div>
+                </div>
+                {{else}}
+                <div class="source-box">
+                    <div class="source-label bom">BOM (D+2)</div>
+                    <div class="no-data">No data</div>
+                </div>
+                {{end}}
             </div>
-            <div class="stat-count">Based on {{.Stats.Count}} days of data</div>
-        </div>
-        
-        <div class="section-title">Wind & Precipitation</div>
-        <div class="stats-card">
-            <div class="stats-grid">
-                <div class="stat-box">
-                    <div class="stat-value {{if le .Stats.MAEWind.Float64 5.0}}good{{else}}warn{{end}}">±{{printf "%.0f" .Stats.MAEWind.Float64}}</div>
-                    <div class="stat-label">Wind error (km/h)</div>
-                    <div class="stat-sublabel">avg {{printf "%+.0f" .Stats.AvgWindBias.Float64}} bias</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-value {{if le .Stats.MAEPrecip.Float64 2.0}}good{{else}}warn{{end}}">±{{printf "%.1f" .Stats.MAEPrecip.Float64}}</div>
-                    <div class="stat-label">Precip error (mm)</div>
-                    <div class="stat-sublabel">avg {{printf "%+.1f" .Stats.AvgPrecipBias.Float64}} bias</div>
-                </div>
-            </div>
+            <div class="stat-count">WU: {{if .WUStats}}{{.WUStats.Count}} days{{else}}no data{{end}} · BOM: {{if .BOMStats}}{{.BOMStats.Count}} days{{else}}no data{{end}}</div>
         </div>
         {{else}}
         <div class="stats-card">
@@ -156,8 +232,36 @@
         </div>
         {{end}}
         
+        {{if .LeadTimeData}}
+        <div class="section-title">Accuracy by Lead Time</div>
+        <div class="stats-card">
+            <table class="lead-table">
+                <thead>
+                    <tr>
+                        <th>Lead</th>
+                        <th class="wu">WU Max</th>
+                        <th class="bom">BOM Max</th>
+                        <th class="wu">WU Min</th>
+                        <th class="bom">BOM Min</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .LeadTimeData}}
+                    <tr>
+                        <td class="lead">D+{{.LeadTime}}</td>
+                        <td>{{if gt .WUDays 0}}±{{printf "%.1f" .WUMAEMax}}°{{else}}-{{end}}</td>
+                        <td>{{if gt .BOMDays 0}}±{{printf "%.1f" .BOMMAEMax}}°{{else}}-{{end}}</td>
+                        <td>{{if gt .WUDays 0}}±{{printf "%.1f" .WUMAEMin}}°{{else}}-{{end}}</td>
+                        <td>{{if gt .BOMDays 0}}±{{printf "%.1f" .BOMMAEMin}}°{{else}}-{{end}}</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{end}}
+        
         {{if .ChartLabels}}
-        <div class="section-title">Bias Over Time</div>
+        <div class="section-title">Max Temp Bias Over Time</div>
         <div class="stats-card">
             <div class="chart-container" style="height: 200px;">
                 <canvas id="biasChart"></canvas>
@@ -172,6 +276,7 @@
                 <thead>
                     <tr>
                         <th>Date</th>
+                        <th>Src</th>
                         <th>Forecast</th>
                         <th>Actual</th>
                         <th>Error</th>
@@ -180,10 +285,11 @@
                 <tbody>
                     {{range .History}}
                     <tr>
-                        <td class="date">{{.ValidDate.Format "Jan 2"}}</td>
-                        <td class="forecast">{{if .ForecastTempMax.Valid}}{{printf "%.0f" .ForecastTempMax.Float64}}°{{end}} / {{if .ForecastTempMin.Valid}}{{printf "%.0f" .ForecastTempMin.Float64}}°{{end}}</td>
-                        <td class="actual">{{if .ActualTempMax.Valid}}{{printf "%.0f" .ActualTempMax.Float64}}°{{end}} / {{if .ActualTempMin.Valid}}{{printf "%.0f" .ActualTempMin.Float64}}°{{end}}</td>
-                        <td class="bias {{.MaxBiasClass}}">{{if .BiasTempMax.Valid}}{{printf "%+.0f" .BiasTempMax.Float64}}°{{end}}</td>
+                        <td class="date">{{.Date}}</td>
+                        <td class="source {{.Source}}">{{.Source}}</td>
+                        <td class="forecast">{{printf "%.0f" .ForecastMax}}° / {{printf "%.0f" .ForecastMin}}°</td>
+                        <td class="actual">{{printf "%.0f" .ActualMax}}° / {{printf "%.0f" .ActualMin}}°</td>
+                        <td class="bias {{.MaxBiasClass}}">{{printf "%+.0f" .BiasMax}}°</td>
                     </tr>
                     {{end}}
                 </tbody>
@@ -200,8 +306,8 @@
     (function() {
         const ctx = document.getElementById('biasChart').getContext('2d');
         const labels = [{{range $i, $l := .ChartLabels}}{{if $i}},{{end}}"{{$l}}"{{end}}];
-        const maxData = [{{range $i, $v := .ChartMax}}{{if $i}},{{end}}{{printf "%.1f" $v}}{{end}}];
-        const minData = [{{range $i, $v := .ChartMin}}{{if $i}},{{end}}{{printf "%.1f" $v}}{{end}}];
+        const wuData = [{{range $i, $v := .ChartWUMax}}{{if $i}},{{end}}{{printf "%.1f" $v}}{{end}}];
+        const bomData = [{{range $i, $v := .ChartBOMMax}}{{if $i}},{{end}}{{printf "%.1f" $v}}{{end}}];
         
         new Chart(ctx, {
             type: 'bar',
@@ -209,19 +315,18 @@
                 labels: labels,
                 datasets: [
                     {
-                        label: 'Max Temp Bias',
-                        data: maxData,
-                        backgroundColor: maxData.map(v => v > 0 ? '#ff704388' : '#4fc3f788'),
-                        borderColor: maxData.map(v => v > 0 ? '#ff7043' : '#4fc3f7'),
+                        label: 'WU',
+                        data: wuData,
+                        backgroundColor: '#4fc3f788',
+                        borderColor: '#4fc3f7',
                         borderWidth: 1
                     },
                     {
-                        label: 'Min Temp Bias',
-                        data: minData,
-                        backgroundColor: minData.map(v => v > 0 ? '#ff704344' : '#4fc3f744'),
-                        borderColor: minData.map(v => v > 0 ? '#ff7043' : '#4fc3f7'),
-                        borderWidth: 1,
-                        borderDash: [2, 2]
+                        label: 'BOM',
+                        data: bomData,
+                        backgroundColor: '#ff704388',
+                        borderColor: '#ff7043',
+                        borderWidth: 1
                     }
                 ]
             },

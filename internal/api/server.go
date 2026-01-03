@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -773,18 +774,37 @@ func (s *Server) handleAPIForecast(w http.ResponseWriter, r *http.Request) {
 }
 
 type AccuracyData struct {
-	Source      string
-	SourceName  string
-	Stats       *models.VerificationStats
-	History     []VerificationRow
-	ChartLabels []string
-	ChartMax    []float64
-	ChartMin    []float64
+	WUStats      *models.VerificationStats
+	BOMStats     *models.VerificationStats
+	UniqueDays   int
+	History      []VerificationRow
+	ChartLabels  []string
+	ChartWUMax   []float64
+	ChartWUMin   []float64
+	ChartBOMMax  []float64
+	ChartBOMMin  []float64
+	LeadTimeData []LeadTimeRow
 }
 
 type VerificationRow struct {
-	models.ForecastVerification
+	Date         string
+	Source       string
+	ForecastMax  float64
+	ForecastMin  float64
+	ActualMax    float64
+	ActualMin    float64
+	BiasMax      float64
 	MaxBiasClass string
+}
+
+type LeadTimeRow struct {
+	LeadTime   int
+	WUMAEMax   float64
+	WUMAEMin   float64
+	BOMMAEMax  float64
+	BOMMAEMin  float64
+	WUDays     int
+	BOMDays    int
 }
 
 func biasClass(bias float64) string {
@@ -802,49 +822,134 @@ func biasClass(bias float64) string {
 }
 
 func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
-	stats, err := s.store.GetVerificationStats()
-	if err != nil {
-		log.Printf("get verification stats: %v", err)
-	}
-
 	data := &AccuracyData{}
 
-	source := "wu"
-	sourceName := "Weather Underground"
-	if wuStats, ok := stats["wu"]; ok {
-		data.Stats = &wuStats
-	} else if bomStats, ok := stats["bom"]; ok {
-		data.Stats = &bomStats
-		source = "bom"
-		sourceName = "Bureau of Meteorology (Wangaratta)"
-	}
-	data.Source = source
-	data.SourceName = sourceName
-
-	history, err := s.store.GetVerificationHistory(source, 14)
+	// Get day-1 stats for WU, day-2 for BOM (BOM doesn't have reliable day-1 data)
+	day1Stats, err := s.store.GetDay1VerificationStats()
 	if err != nil {
-		log.Printf("get history: %v", err)
+		log.Printf("get day1 verification stats: %v", err)
 	}
-	for _, v := range history {
-		row := VerificationRow{ForecastVerification: v}
-		if v.BiasTempMax.Valid {
-			row.MaxBiasClass = biasClass(v.BiasTempMax.Float64)
+	if wuStats, ok := day1Stats["wu"]; ok {
+		data.WUStats = &wuStats
+	}
+	// For BOM, use day-2 stats since they don't reliably have day-1 forecasts before cutoff
+	biasStats, err := s.store.GetBiasStatsFromVerification(30)
+	if err != nil {
+		log.Printf("get bias stats: %v", err)
+	}
+	for _, b := range biasStats {
+		if b.Source == "bom" && b.DayOfForecast == 2 && b.CountMax > 0 {
+			data.BOMStats = &models.VerificationStats{
+				Count:        b.CountMax,
+				AvgMaxBias:   sql.NullFloat64{Float64: b.AvgBiasMax, Valid: true},
+				AvgMinBias:   sql.NullFloat64{Float64: b.AvgBiasMin, Valid: true},
+				MAEMax:       sql.NullFloat64{Float64: b.MAEMax, Valid: true},
+				MAEMin:       sql.NullFloat64{Float64: b.MAEMin, Valid: true},
+			}
+			break
+		}
+	}
+
+	// Get best-lead history for chart and table (WU D+1, BOM D+2)
+	history, err := s.store.GetBestLeadVerificationHistory(30)
+	if err != nil {
+		log.Printf("get day1 history: %v", err)
+	}
+
+	// Build history rows and chart data
+	// Group by date for chart (one label per date, separate series for WU/BOM)
+	type chartPoint struct {
+		wuMax, wuMin, bomMax, bomMin float64
+		hasWU, hasBOM                bool
+	}
+	chartData := make(map[string]*chartPoint)
+	var dates []string
+	seenDates := make(map[string]bool)
+
+	for _, h := range history {
+		dateStr := h.ValidDate.Format("Jan 2")
+		if !seenDates[dateStr] {
+			seenDates[dateStr] = true
+			dates = append(dates, dateStr)
+			chartData[dateStr] = &chartPoint{}
+		}
+
+		// Build table row
+		row := VerificationRow{
+			Date:   dateStr,
+			Source: h.Source,
+		}
+		if h.ForecastTempMax.Valid {
+			row.ForecastMax = h.ForecastTempMax.Float64
+		}
+		if h.ForecastTempMin.Valid {
+			row.ForecastMin = h.ForecastTempMin.Float64
+		}
+		if h.ActualTempMax.Valid {
+			row.ActualMax = h.ActualTempMax.Float64
+		}
+		if h.ActualTempMin.Valid {
+			row.ActualMin = h.ActualTempMin.Float64
+		}
+		if h.BiasTempMax.Valid {
+			row.BiasMax = h.BiasTempMax.Float64
+			row.MaxBiasClass = biasClass(h.BiasTempMax.Float64)
 		}
 		data.History = append(data.History, row)
+
+		// Build chart data
+		pt := chartData[dateStr]
+		if h.Source == "wu" {
+			pt.hasWU = true
+			if h.BiasTempMax.Valid {
+				pt.wuMax = h.BiasTempMax.Float64
+			}
+			if h.BiasTempMin.Valid {
+				pt.wuMin = h.BiasTempMin.Float64
+			}
+		} else if h.Source == "bom" {
+			pt.hasBOM = true
+			if h.BiasTempMax.Valid {
+				pt.bomMax = h.BiasTempMax.Float64
+			}
+			if h.BiasTempMin.Valid {
+				pt.bomMin = h.BiasTempMin.Float64
+			}
+		}
 	}
 
-	for i := len(history) - 1; i >= 0; i-- {
-		v := history[i]
-		data.ChartLabels = append(data.ChartLabels, v.ValidDate.Format("Jan 2"))
-		if v.BiasTempMax.Valid {
-			data.ChartMax = append(data.ChartMax, v.BiasTempMax.Float64)
-		} else {
-			data.ChartMax = append(data.ChartMax, 0)
+	// Reverse dates for chronological chart order
+	for i := len(dates) - 1; i >= 0; i-- {
+		dateStr := dates[i]
+		pt := chartData[dateStr]
+		data.ChartLabels = append(data.ChartLabels, dateStr)
+		data.ChartWUMax = append(data.ChartWUMax, pt.wuMax)
+		data.ChartWUMin = append(data.ChartWUMin, pt.wuMin)
+		data.ChartBOMMax = append(data.ChartBOMMax, pt.bomMax)
+		data.ChartBOMMin = append(data.ChartBOMMin, pt.bomMin)
+	}
+	data.UniqueDays = len(dates)
+
+	// Get lead time breakdown (reuse biasStats from earlier)
+	leadMap := make(map[int]*LeadTimeRow)
+	for _, b := range biasStats {
+		if _, ok := leadMap[b.DayOfForecast]; !ok {
+			leadMap[b.DayOfForecast] = &LeadTimeRow{LeadTime: b.DayOfForecast}
 		}
-		if v.BiasTempMin.Valid {
-			data.ChartMin = append(data.ChartMin, v.BiasTempMin.Float64)
-		} else {
-			data.ChartMin = append(data.ChartMin, 0)
+		lt := leadMap[b.DayOfForecast]
+		if b.Source == "wu" {
+			lt.WUMAEMax = b.MAEMax
+			lt.WUMAEMin = b.MAEMin
+			lt.WUDays = b.CountMax
+		} else if b.Source == "bom" {
+			lt.BOMMAEMax = b.MAEMax
+			lt.BOMMAEMin = b.MAEMin
+			lt.BOMDays = b.CountMax
+		}
+	}
+	for i := 1; i <= 5; i++ {
+		if lt, ok := leadMap[i]; ok {
+			data.LeadTimeData = append(data.LeadTimeData, *lt)
 		}
 	}
 
