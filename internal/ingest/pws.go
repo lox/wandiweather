@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/lox/wandiweather/internal/metrics"
 	"github.com/lox/wandiweather/internal/models"
 )
 
@@ -64,6 +65,7 @@ type CurrentObservation struct {
 
 func (p *PWS) FetchCurrent(stationID string) (*models.Observation, string, error) {
 	url := fmt.Sprintf("https://api.weather.com/v2/pws/observations/current?stationId=%s&format=json&units=m&apiKey=%s", stationID, p.apiKey)
+	start := time.Now()
 
 	var body []byte
 	operation := func() error {
@@ -74,17 +76,21 @@ func (p *PWS) FetchCurrent(stationID string) (*models.Observation, string, error
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusTooManyRequests {
+			metrics.PWSAPICallsTotal.WithLabelValues(stationID, "current", "rate_limited").Inc()
 			return fmt.Errorf("rate limited: status %d", resp.StatusCode)
 		}
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			metrics.PWSAPICallsTotal.WithLabelValues(stationID, "current", "auth_error").Inc()
 			b, _ := io.ReadAll(resp.Body)
 			return backoff.Permanent(fmt.Errorf("auth error: status %d: %s", resp.StatusCode, truncateBody(b)))
 		}
 		if resp.StatusCode >= 500 {
+			metrics.PWSAPICallsTotal.WithLabelValues(stationID, "current", "server_error").Inc()
 			b, _ := io.ReadAll(resp.Body)
 			return fmt.Errorf("server error: status %d: %s", resp.StatusCode, truncateBody(b))
 		}
 		if resp.StatusCode != http.StatusOK {
+			metrics.PWSAPICallsTotal.WithLabelValues(stationID, "current", "client_error").Inc()
 			b, _ := io.ReadAll(resp.Body)
 			return backoff.Permanent(fmt.Errorf("client error: status %d: %s", resp.StatusCode, truncateBody(b)))
 		}
@@ -101,6 +107,9 @@ func (p *PWS) FetchCurrent(stationID string) (*models.Observation, string, error
 	if err := backoff.Retry(operation, bo); err != nil {
 		return nil, "", err
 	}
+
+	metrics.PWSAPICallsTotal.WithLabelValues(stationID, "current", "success").Inc()
+	metrics.PWSAPILatency.WithLabelValues(stationID, "current").Observe(time.Since(start).Seconds())
 
 	var data CurrentResponse
 	if err := json.Unmarshal(body, &data); err != nil {
@@ -224,6 +233,7 @@ func (p *PWS) FetchHistory7Day(stationID string) ([]models.Observation, error) {
 
 func (p *PWS) fetchHistory(stationID, endpoint string) ([]models.Observation, error) {
 	url := fmt.Sprintf("https://api.weather.com/v2/pws/observations/%s?stationId=%s&format=json&units=m&apiKey=%s", endpoint, stationID, p.apiKey)
+	start := time.Now()
 
 	var body []byte
 	operation := func() error {
@@ -234,17 +244,21 @@ func (p *PWS) fetchHistory(stationID, endpoint string) ([]models.Observation, er
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusTooManyRequests {
+			metrics.PWSAPICallsTotal.WithLabelValues(stationID, "history", "rate_limited").Inc()
 			return fmt.Errorf("rate limited: status %d", resp.StatusCode)
 		}
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			metrics.PWSAPICallsTotal.WithLabelValues(stationID, "history", "auth_error").Inc()
 			b, _ := io.ReadAll(resp.Body)
 			return backoff.Permanent(fmt.Errorf("auth error: status %d: %s", resp.StatusCode, truncateBody(b)))
 		}
 		if resp.StatusCode >= 500 {
+			metrics.PWSAPICallsTotal.WithLabelValues(stationID, "history", "server_error").Inc()
 			b, _ := io.ReadAll(resp.Body)
 			return fmt.Errorf("server error: status %d: %s", resp.StatusCode, truncateBody(b))
 		}
 		if resp.StatusCode != http.StatusOK {
+			metrics.PWSAPICallsTotal.WithLabelValues(stationID, "history", "client_error").Inc()
 			b, _ := io.ReadAll(resp.Body)
 			return backoff.Permanent(fmt.Errorf("client error: status %d: %s", resp.StatusCode, truncateBody(b)))
 		}
@@ -261,6 +275,9 @@ func (p *PWS) fetchHistory(stationID, endpoint string) ([]models.Observation, er
 	if err := backoff.Retry(operation, bo); err != nil {
 		return nil, err
 	}
+
+	metrics.PWSAPICallsTotal.WithLabelValues(stationID, "history", "success").Inc()
+	metrics.PWSAPILatency.WithLabelValues(stationID, "history").Observe(time.Since(start).Seconds())
 
 	var data HistoryResponse
 	if err := json.Unmarshal(body, &data); err != nil {

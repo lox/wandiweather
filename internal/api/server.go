@@ -18,6 +18,9 @@ import (
 	"github.com/lox/wandiweather/internal/imagegen"
 	"github.com/lox/wandiweather/internal/models"
 	"github.com/lox/wandiweather/internal/store"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	_ "github.com/lox/wandiweather/internal/metrics" // Register metrics
 )
 
 //go:embed templates/*
@@ -83,6 +86,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/accuracy", s.handleAccuracy)
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/weather-image", s.handleWeatherImage)
 	mux.HandleFunc("/weather-image/", s.handleWeatherImage)
 	mux.HandleFunc("/partials/current", s.handleCurrentPartial)

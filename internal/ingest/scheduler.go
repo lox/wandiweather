@@ -36,7 +36,7 @@ func NewScheduler(store *store.Store, pws *PWS, forecast *ForecastClient, statio
 		daily:       NewDailyJobs(store),
 		stationIDs:  stationIDs,
 		loc:         loc,
-		obsInterval: 5 * time.Minute,
+		obsInterval: 10 * time.Minute,
 		fcInterval:  6 * time.Hour,
 	}
 }
