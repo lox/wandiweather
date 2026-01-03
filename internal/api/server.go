@@ -44,6 +44,12 @@ func NewServer(store *store.Store, port string, loc *time.Location) *Server {
 			}
 			return *f
 		},
+		"abs": func(f float64) float64 {
+			if f < 0 {
+				return -f
+			}
+			return f
+		},
 	}
 	tmpl := template.Must(template.New("").Funcs(funcs).ParseFS(templateFS, "templates/*.html"))
 
@@ -220,7 +226,6 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 	data := &CurrentData{
 		Stations:    make(map[string]*models.Observation),
 		StationMeta: make(map[string]models.Station),
-		LastUpdated: time.Now(),
 	}
 
 	var valleyTemps, midTemps, upperTemps []float64
@@ -239,6 +244,7 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 
 		if st.IsPrimary {
 			data.Primary = obs
+			data.LastUpdated = obs.ObservedAt.In(s.loc)
 		}
 
 		reading := StationReading{Station: st, Obs: obs}

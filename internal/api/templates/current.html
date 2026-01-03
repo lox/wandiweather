@@ -6,14 +6,12 @@
 <!-- NOW: Current conditions -->
 <div class="hero">
     {{if gt .ValleyTemp 0.0}}
-    <div class="temp-now">
-        {{printf "%.0f" .ValleyTemp}}<span class="unit">°</span>
-        {{if .TempChangeRate}}
-        <span class="temp-trend {{if gt (deref .TempChangeRate) 0.0}}rising{{else}}falling{{end}}">
-            {{if gt (deref .TempChangeRate) 0.0}}↑{{else}}↓{{end}}{{printf "%.1f" (deref .TempChangeRate)}}°/hr
-        </span>
-        {{end}}
+    <div class="temp-now">{{printf "%.0f" .ValleyTemp}}<span class="unit">°</span></div>
+    {{if .TempChangeRate}}
+    <div class="temp-trend {{if gt (deref .TempChangeRate) 0.0}}rising{{else}}falling{{end}}">
+        {{if gt (deref .TempChangeRate) 0.0}}+{{else}}-{{end}}{{printf "%.1f" (abs (deref .TempChangeRate))}}°C/hr
     </div>
+    {{end}}
     {{if .Primary}}
     <div class="conditions-inline">
         {{if .Primary.Humidity.Valid}}<span>Humidity {{.Primary.Humidity.Int64}}%</span>{{end}}
