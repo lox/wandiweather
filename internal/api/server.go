@@ -522,34 +522,31 @@ func (s *Server) handleChartPartial(w http.ResponseWriter, r *http.Request) {
 	end := time.Now()
 	start := end.Add(-24 * time.Hour)
 
-	valleyObs, _ := s.store.GetObservations("IWANDI23", start, end)
-	midObs, _ := s.store.GetObservations("IWANDI8", start, end)
-	upperObs, _ := s.store.GetObservations("IVICTORI162", start, end)
+	stations, _ := s.store.GetActiveStations()
+	colors := []string{"#4fc3f7", "#81c784", "#ffb74d", "#f48fb1"}
 
 	chartData := ChartData{
 		Labels: make([]string, 0),
-		Series: []ChartSeries{
-			{Name: "Valley (117m)", Data: make([]float64, 0), Color: "#4fc3f7"},
-			{Name: "Mid-slope (364m)", Data: make([]float64, 0), Color: "#81c784"},
-			{Name: "Upper (400m)", Data: make([]float64, 0), Color: "#ffb74d"},
-		},
+		Series: make([]ChartSeries, 0),
 	}
 
-	for _, obs := range valleyObs {
-		if obs.Temp.Valid {
-			chartData.Labels = append(chartData.Labels, obs.ObservedAt.Format("15:04"))
-			chartData.Series[0].Data = append(chartData.Series[0].Data, obs.Temp.Float64)
+	for i, st := range stations {
+		obs, _ := s.store.GetObservations(st.StationID, start, end)
+		series := ChartSeries{
+			Name:  fmt.Sprintf("%s (%.0fm)", st.Name, st.Elevation),
+			Data:  make([]float64, 0),
+			Color: colors[i%len(colors)],
 		}
-	}
-	for _, obs := range midObs {
-		if obs.Temp.Valid {
-			chartData.Series[1].Data = append(chartData.Series[1].Data, obs.Temp.Float64)
+
+		for _, o := range obs {
+			if o.Temp.Valid {
+				if i == 0 {
+					chartData.Labels = append(chartData.Labels, o.ObservedAt.In(s.loc).Format("3:04 PM"))
+				}
+				series.Data = append(series.Data, o.Temp.Float64)
+			}
 		}
-	}
-	for _, obs := range upperObs {
-		if obs.Temp.Valid {
-			chartData.Series[2].Data = append(chartData.Series[2].Data, obs.Temp.Float64)
-		}
+		chartData.Series = append(chartData.Series, series)
 	}
 
 	s.tmpl.ExecuteTemplate(w, "chart.html", chartData)

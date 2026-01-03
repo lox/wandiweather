@@ -69,6 +69,12 @@
 
 <div class="forecast-section" hx-get="/partials/forecast" hx-trigger="load, every 3600s" hx-swap="innerHTML"></div>
 
+<div class="chart-toggle">
+    <a onclick="toggleChart()">Show 24hr chart</a>
+</div>
+
+<div id="chart-section" class="chart-section" hx-get="/partials/chart" hx-trigger="revealed" hx-swap="innerHTML"></div>
+
 <div class="stations-toggle">
     <a onclick="toggleStations()">Show all stations</a>
 </div>

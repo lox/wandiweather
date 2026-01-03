@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WandiWeather</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
         :root {
             --bg: {{.Palette.Background}};
@@ -216,6 +217,36 @@
         }
         .updated a { color: var(--text-muted); }
         
+        .chart-section {
+            display: none;
+            margin-top: 1.5rem;
+        }
+        .chart-section.show { display: block; }
+        .chart-section h2 {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.75rem;
+        }
+        .chart-container {
+            background: var(--card);
+            border-radius: 12px;
+            padding: 1rem;
+            height: 200px;
+        }
+        .chart-toggle {
+            margin-top: 1rem;
+            text-align: center;
+            font-size: 0.8rem;
+        }
+        .chart-toggle a {
+            color: var(--text-muted);
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .chart-toggle a:hover { color: var(--text); }
+        
         .hero {
             position: relative;
             text-align: center;
@@ -255,6 +286,12 @@
     <script>
         function toggleStations() {
             document.getElementById('stations-grid').classList.toggle('show');
+        }
+        
+        function toggleChart() {
+            var section = document.getElementById('chart-section');
+            section.classList.toggle('show');
+            htmx.trigger(section, 'revealed');
         }
         
         // Weather image URL (with optional override)
