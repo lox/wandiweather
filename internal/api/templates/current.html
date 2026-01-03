@@ -6,10 +6,19 @@
 <!-- NOW: Current conditions -->
 <div class="hero">
     {{if gt .ValleyTemp 0.0}}
-    <div class="temp-now">{{printf "%.0f" .ValleyTemp}}<span class="unit">°</span></div>
+    <div class="temp-now">
+        {{printf "%.0f" .ValleyTemp}}<span class="unit">°</span>
+        {{if .TempChangeRate}}
+        <span class="temp-trend {{if gt (deref .TempChangeRate) 0.0}}rising{{else}}falling{{end}}">
+            {{if gt (deref .TempChangeRate) 0.0}}↑{{else}}↓{{end}}{{printf "%.1f" (deref .TempChangeRate)}}°/hr
+        </span>
+        {{end}}
+    </div>
     {{if .Primary}}
     <div class="conditions-inline">
-        {{if .Primary.Humidity.Valid}}<span>{{.Primary.Humidity.Int64}}% humidity</span>{{end}}
+        {{if .Primary.Humidity.Valid}}<span>Humidity {{.Primary.Humidity.Int64}}%</span>{{end}}
+        {{if .FeelsLike}}<span>Feels {{printf "%.0f" (deref .FeelsLike)}}°</span>{{end}}
+        {{if .Primary.Dewpoint.Valid}}<span>Dew {{printf "%.0f" .Primary.Dewpoint.Float64}}°</span>{{end}}
         {{if .Primary.WindGust.Valid}}<span>💨 {{printf "%.0f" .Primary.WindGust.Float64}} km/h</span>{{end}}
         {{if .Primary.UV.Valid}}{{if gt .Primary.UV.Float64 0.0}}<span>☀️ UV {{printf "%.0f" .Primary.UV.Float64}}</span>{{else if .Moon}}<span>{{.Moon.Emoji}} {{.Moon.Illumination}}%</span>{{end}}{{end}}
     </div>
@@ -42,7 +51,7 @@
     </div>
     {{if .TodayStats}}
     <div class="observed-progress">
-        So far: <span class="obs-temp">{{printf "%.0f" .TodayStats.MinTemp}}° – {{printf "%.0f" .TodayStats.MaxTemp}}°</span>{{if .TodayStats.HasWind}}, max {{printf "%.0f" .TodayStats.MaxWind}}/{{printf "%.0f" .TodayStats.MaxGust}} km/h wind{{end}}{{if .TodayStats.HasRain}}, {{printf "%.1f" .TodayStats.RainTotal}}mm rain{{end}}
+        So far: <span class="obs-temp" {{if .TodayStats.MinTempTime}}title="at {{.TodayStats.MinTempTime}}"{{end}}>{{printf "%.0f" .TodayStats.MinTemp}}°</span> – <span class="obs-temp" {{if .TodayStats.MaxTempTime}}title="at {{.TodayStats.MaxTempTime}}"{{end}}>{{printf "%.0f" .TodayStats.MaxTemp}}°</span>{{if .TodayStats.HasWind}}, max {{if gt .TodayStats.MaxGust .TodayStats.MaxWind}}{{printf "%.0f" .TodayStats.MaxGust}}{{else}}{{printf "%.0f" .TodayStats.MaxWind}}{{end}} km/h winds{{end}}{{if .TodayStats.HasRain}}, {{printf "%.1f" .TodayStats.RainTotal}}mm rain{{end}}
     </div>
     {{end}}
 </div>

@@ -356,16 +356,91 @@ func (s *Store) GetPrimaryStation() (*models.Station, error) {
 	return &st, nil
 }
 
+type TodayStatsResult struct {
+	MinTemp     sql.NullFloat64
+	MaxTemp     sql.NullFloat64
+	MinTempTime sql.NullTime
+	MaxTempTime sql.NullTime
+	RainTotal   sql.NullFloat64
+	MaxWind     sql.NullFloat64
+	MaxGust     sql.NullFloat64
+}
+
 func (s *Store) GetTodayStats(stationID string, localDate time.Time) (minTemp, maxTemp, rainTotal, maxWind, maxGust sql.NullFloat64, err error) {
+	result, err := s.GetTodayStatsExtended(stationID, localDate)
+	if err != nil {
+		return
+	}
+	return result.MinTemp, result.MaxTemp, result.RainTotal, result.MaxWind, result.MaxGust, nil
+}
+
+func (s *Store) GetTodayStatsExtended(stationID string, localDate time.Time) (*TodayStatsResult, error) {
 	startUTC := time.Date(localDate.Year(), localDate.Month(), localDate.Day(), 0, 0, 0, 0, time.UTC).Add(-11 * time.Hour)
 	endUTC := time.Now().UTC()
 
-	err = s.db.QueryRow(`
+	result := &TodayStatsResult{}
+
+	err := s.db.QueryRow(`
 		SELECT MIN(temp), MAX(temp), MAX(precip_total), MAX(wind_speed), MAX(wind_gust)
 		FROM observations
 		WHERE station_id = ? AND observed_at >= ? AND observed_at <= ? AND temp IS NOT NULL
-	`, stationID, startUTC, endUTC).Scan(&minTemp, &maxTemp, &rainTotal, &maxWind, &maxGust)
-	return
+	`, stationID, startUTC, endUTC).Scan(&result.MinTemp, &result.MaxTemp, &result.RainTotal, &result.MaxWind, &result.MaxGust)
+	if err != nil {
+		return nil, err
+	}
+
+	if result.MinTemp.Valid {
+		s.db.QueryRow(`
+			SELECT observed_at FROM observations
+			WHERE station_id = ? AND observed_at >= ? AND observed_at <= ? AND temp = ?
+			ORDER BY observed_at LIMIT 1
+		`, stationID, startUTC, endUTC, result.MinTemp.Float64).Scan(&result.MinTempTime)
+	}
+
+	if result.MaxTemp.Valid {
+		s.db.QueryRow(`
+			SELECT observed_at FROM observations
+			WHERE station_id = ? AND observed_at >= ? AND observed_at <= ? AND temp = ?
+			ORDER BY observed_at DESC LIMIT 1
+		`, stationID, startUTC, endUTC, result.MaxTemp.Float64).Scan(&result.MaxTempTime)
+	}
+
+	return result, nil
+}
+
+func (s *Store) GetTempChangeRate(stationID string) (sql.NullFloat64, error) {
+	var result sql.NullFloat64
+	oneHourAgo := time.Now().UTC().Add(-1 * time.Hour)
+
+	var oldestTemp, newestTemp sql.NullFloat64
+	var oldestTime, newestTime time.Time
+
+	err := s.db.QueryRow(`
+		SELECT temp, observed_at FROM observations
+		WHERE station_id = ? AND observed_at >= ? AND temp IS NOT NULL
+		ORDER BY observed_at ASC LIMIT 1
+	`, stationID, oneHourAgo).Scan(&oldestTemp, &oldestTime)
+	if err != nil || !oldestTemp.Valid {
+		return result, nil
+	}
+
+	err = s.db.QueryRow(`
+		SELECT temp, observed_at FROM observations
+		WHERE station_id = ? AND temp IS NOT NULL
+		ORDER BY observed_at DESC LIMIT 1
+	`, stationID).Scan(&newestTemp, &newestTime)
+	if err != nil || !newestTemp.Valid {
+		return result, nil
+	}
+
+	hoursDiff := newestTime.Sub(oldestTime).Hours()
+	if hoursDiff < 0.25 {
+		return result, nil
+	}
+
+	rate := (newestTemp.Float64 - oldestTemp.Float64) / hoursDiff
+	result = sql.NullFloat64{Float64: rate, Valid: true}
+	return result, nil
 }
 
 func (s *Store) GetLatestForecasts() (map[string][]models.Forecast, error) {

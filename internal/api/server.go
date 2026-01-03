@@ -119,19 +119,21 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 type CurrentData struct {
-	Primary       *models.Observation
-	ValleyTemp    float64
-	Stations      map[string]*models.Observation
-	StationMeta   map[string]models.Station
-	AllStations   []StationReading
-	ValleyFloor   []StationReading
-	MidSlope      []StationReading
-	Upper         []StationReading
-	Inversion     *InversionStatus
-	TodayForecast *TodayForecast
-	TodayStats    *TodayStats
-	LastUpdated   time.Time
-	Moon          *MoonData
+	Primary        *models.Observation
+	ValleyTemp     float64
+	TempChangeRate *float64
+	FeelsLike      *float64
+	Stations       map[string]*models.Observation
+	StationMeta    map[string]models.Station
+	AllStations    []StationReading
+	ValleyFloor    []StationReading
+	MidSlope       []StationReading
+	Upper          []StationReading
+	Inversion      *InversionStatus
+	TodayForecast  *TodayForecast
+	TodayStats     *TodayStats
+	LastUpdated    time.Time
+	Moon           *MoonData
 }
 
 // MoonData contains moon phase information for display.
@@ -185,13 +187,15 @@ type TodayForecast struct {
 }
 
 type TodayStats struct {
-	MinTemp   float64
-	MaxTemp   float64
-	RainTotal float64
-	HasRain   bool
-	MaxWind   float64
-	MaxGust   float64
-	HasWind   bool
+	MinTemp     float64
+	MaxTemp     float64
+	MinTempTime string
+	MaxTempTime string
+	RainTotal   float64
+	HasRain     bool
+	MaxWind     float64
+	MaxGust     float64
+	HasWind     bool
 }
 
 type StationReading struct {
@@ -296,25 +300,46 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 		Emoji:        moonEmoji(phase),
 	}
 
-	minTemp, maxTemp, rainTotal, maxWind, maxGust, err := s.store.GetTodayStats("IWANDI23", now)
+	todayStats, err := s.store.GetTodayStatsExtended("IWANDI23", now)
 	if err == nil {
 		ts := &TodayStats{}
-		if minTemp.Valid {
-			ts.MinTemp = minTemp.Float64
+		if todayStats.MinTemp.Valid {
+			ts.MinTemp = todayStats.MinTemp.Float64
 		}
-		if maxTemp.Valid {
-			ts.MaxTemp = maxTemp.Float64
+		if todayStats.MaxTemp.Valid {
+			ts.MaxTemp = todayStats.MaxTemp.Float64
 		}
-		if rainTotal.Valid && rainTotal.Float64 > 0 {
-			ts.RainTotal = rainTotal.Float64
+		if todayStats.MinTempTime.Valid {
+			ts.MinTempTime = todayStats.MinTempTime.Time.In(loc).Format("3:04 PM")
+		}
+		if todayStats.MaxTempTime.Valid {
+			ts.MaxTempTime = todayStats.MaxTempTime.Time.In(loc).Format("3:04 PM")
+		}
+		if todayStats.RainTotal.Valid && todayStats.RainTotal.Float64 > 0 {
+			ts.RainTotal = todayStats.RainTotal.Float64
 			ts.HasRain = true
 		}
-		if maxWind.Valid || maxGust.Valid {
-			ts.MaxWind = maxWind.Float64
-			ts.MaxGust = maxGust.Float64
+		if todayStats.MaxWind.Valid || todayStats.MaxGust.Valid {
+			ts.MaxWind = todayStats.MaxWind.Float64
+			ts.MaxGust = todayStats.MaxGust.Float64
 			ts.HasWind = true
 		}
 		data.TodayStats = ts
+	}
+
+	if rate, err := s.store.GetTempChangeRate("IWANDI23"); err == nil && rate.Valid {
+		data.TempChangeRate = &rate.Float64
+	}
+
+	if data.Primary != nil {
+		if data.Primary.Temp.Valid {
+			temp := data.Primary.Temp.Float64
+			if temp >= 27 && data.Primary.HeatIndex.Valid {
+				data.FeelsLike = &data.Primary.HeatIndex.Float64
+			} else if temp <= 10 && data.Primary.WindChill.Valid {
+				data.FeelsLike = &data.Primary.WindChill.Float64
+			}
+		}
 	}
 
 	forecasts, err := s.store.GetLatestForecasts()
