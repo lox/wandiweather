@@ -439,6 +439,9 @@ func (s *Store) GetTempChangeRate(stationID string) (sql.NullFloat64, error) {
 	}
 
 	rate := (newestTemp.Float64 - oldestTemp.Float64) / hoursDiff
+	if rate > -0.2 && rate < 0.2 {
+		return result, nil
+	}
 	result = sql.NullFloat64{Float64: rate, Valid: true}
 	return result, nil
 }
