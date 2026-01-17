@@ -16,6 +16,19 @@ task daily     # Run daily jobs manually
 task pull-db   # Pull production database from Fly.io
 ```
 
+## Production Commands
+
+```bash
+# Deploy to Fly.io
+fly deploy
+
+# Run backfill on prod (must specify --db path)
+fly ssh console -C "/app/wandiweather --db /data/wandiweather.db --backfill-daily"
+
+# Run daily jobs on prod
+fly ssh console -C "/app/wandiweather --db /data/wandiweather.db --daily"
+```
+
 ## Project Structure
 
 - `cmd/wandiweather/main.go` - Entry point, station config, CLI flags
