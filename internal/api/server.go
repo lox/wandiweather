@@ -784,6 +784,7 @@ type AccuracyData struct {
 	ChartBOMMax  []float64
 	ChartBOMMin  []float64
 	LeadTimeData []LeadTimeRow
+	RegimeStats  []RegimeRow
 }
 
 type VerificationRow struct {
@@ -795,6 +796,21 @@ type VerificationRow struct {
 	ActualMin    float64
 	BiasMax      float64
 	MaxBiasClass string
+	Regime       string
+	RegimeBadge  string
+}
+
+type RegimeRow struct {
+	Regime    string
+	Label     string
+	Badge     string
+	Color     string
+	WUMAEMax  float64
+	WUMAEMin  float64
+	BOMMAEMax float64
+	BOMMAEMin float64
+	WUDays    int
+	BOMDays   int
 }
 
 type LeadTimeRow struct {
@@ -819,6 +835,47 @@ func biasClass(bias float64) string {
 		return "ok"
 	}
 	return "bad"
+}
+
+func regimeBadge(regime string) string {
+	switch regime {
+	case "heatwave":
+		return "🔥"
+	case "inversion":
+		return "❄️"
+	case "clear_calm":
+		return "☀️"
+	default:
+		return ""
+	}
+}
+
+func regimeLabel(regime string) string {
+	switch regime {
+	case "heatwave":
+		return "Heatwave"
+	case "inversion":
+		return "Inversion"
+	case "clear_calm":
+		return "Clear/Calm"
+	case "normal":
+		return "Normal"
+	default:
+		return regime
+	}
+}
+
+func regimeColor(regime string) string {
+	switch regime {
+	case "heatwave":
+		return "#ff7043"
+	case "inversion":
+		return "#4fc3f7"
+	case "clear_calm":
+		return "#4ecdc4"
+	default:
+		return "#888"
+	}
 }
 
 func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
@@ -850,10 +907,10 @@ func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get best-lead history for chart and table (WU D+1, BOM D+2)
-	history, err := s.store.GetBestLeadVerificationHistory(30)
+	// Get best-lead history with regime data for chart and table (WU D+1, BOM D+2)
+	history, err := s.store.GetBestLeadVerificationWithRegime(30)
 	if err != nil {
-		log.Printf("get day1 history: %v", err)
+		log.Printf("get verification history with regime: %v", err)
 	}
 
 	// Build history rows and chart data
@@ -878,6 +935,8 @@ func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
 		row := VerificationRow{
 			Date:   dateStr,
 			Source: h.Source,
+			Regime: h.Regime,
+			RegimeBadge: regimeBadge(h.Regime),
 		}
 		if h.ForecastTempMax.Valid {
 			row.ForecastMax = h.ForecastTempMax.Float64
@@ -951,6 +1010,26 @@ func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
 		if lt, ok := leadMap[i]; ok {
 			data.LeadTimeData = append(data.LeadTimeData, *lt)
 		}
+	}
+
+	// Get regime-based accuracy stats
+	regimeStats, err := s.store.GetRegimeVerificationStats(30)
+	if err != nil {
+		log.Printf("get regime verification stats: %v", err)
+	}
+	for _, rs := range regimeStats {
+		data.RegimeStats = append(data.RegimeStats, RegimeRow{
+			Regime:    rs.Regime,
+			Label:     regimeLabel(rs.Regime),
+			Badge:     regimeBadge(rs.Regime),
+			Color:     regimeColor(rs.Regime),
+			WUMAEMax:  rs.WUMAEMax,
+			WUMAEMin:  rs.WUMAEMin,
+			BOMMAEMax: rs.BOMMAEMax,
+			BOMMAEMin: rs.BOMMAEMin,
+			WUDays:    rs.WUDays,
+			BOMDays:   rs.BOMDays,
+		})
 	}
 
 	s.tmpl.ExecuteTemplate(w, "accuracy.html", data)

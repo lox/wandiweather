@@ -1159,3 +1159,168 @@ func (s *Store) GetCorrectionStatsForRegime(source, target string, dayOfForecast
 	}
 	return &stats, nil
 }
+
+// VerificationWithRegime extends VerificationHistoryRow with regime data.
+type VerificationWithRegime struct {
+	VerificationHistoryRow
+	Regime string // "heatwave", "inversion", "clear_calm", or ""
+}
+
+// GetBestLeadVerificationWithRegime returns verification history joined with daily_summaries
+// to get regime classification for each day.
+func (s *Store) GetBestLeadVerificationWithRegime(limit int) ([]VerificationWithRegime, error) {
+	rows, err := s.db.Query(`
+		SELECT v.id, v.forecast_id, v.valid_date, v.forecast_temp_max, v.forecast_temp_min,
+		       v.actual_temp_max, v.actual_temp_min, v.bias_temp_max, v.bias_temp_min, v.created_at,
+		       f.source, f.day_of_forecast,
+		       ds.regime_heatwave, ds.regime_inversion, ds.regime_clear_calm
+		FROM forecast_verification v
+		JOIN forecasts f ON v.forecast_id = f.id
+		LEFT JOIN daily_summaries ds ON SUBSTR(v.valid_date, 1, 10) = SUBSTR(ds.date, 1, 10)
+		LEFT JOIN stations st ON ds.station_id = st.station_id AND st.is_primary = 1
+		WHERE v.bias_temp_max IS NOT NULL 
+		  AND ((f.source = 'wu' AND f.day_of_forecast = 1) OR (f.source = 'bom' AND f.day_of_forecast = 2))
+		  AND (ds.station_id IS NULL OR st.station_id IS NOT NULL)
+		ORDER BY v.valid_date DESC, f.source
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []VerificationWithRegime
+	for rows.Next() {
+		var r VerificationWithRegime
+		var heatwave, inversion, clearCalm sql.NullBool
+		if err := rows.Scan(&r.ID, &r.ForecastID, &r.ValidDate, &r.ForecastTempMax, &r.ForecastTempMin,
+			&r.ActualTempMax, &r.ActualTempMin, &r.BiasTempMax, &r.BiasTempMin, &r.CreatedAt,
+			&r.Source, &r.DayOfForecast,
+			&heatwave, &inversion, &clearCalm); err != nil {
+			return nil, err
+		}
+		// Priority: heatwave > inversion > clear_calm
+		if heatwave.Valid && heatwave.Bool {
+			r.Regime = "heatwave"
+		} else if inversion.Valid && inversion.Bool {
+			r.Regime = "inversion"
+		} else if clearCalm.Valid && clearCalm.Bool {
+			r.Regime = "clear_calm"
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+// RegimeStats holds MAE statistics for a specific regime, broken down by source.
+type RegimeStats struct {
+	Regime    string
+	WUMAEMax  float64
+	WUMAEMin  float64
+	BOMMAEMax float64
+	BOMMAEMin float64
+	WUDays    int
+	BOMDays   int
+}
+
+// GetRegimeVerificationStats returns MAE grouped by regime and source (best lead: WU D+1, BOM D+2).
+func (s *Store) GetRegimeVerificationStats(windowDays int) ([]RegimeStats, error) {
+	cutoff := time.Now().AddDate(0, 0, -windowDays).Format("2006-01-02")
+	rows, err := s.db.Query(`
+		SELECT 
+			CASE 
+				WHEN ds.regime_heatwave = 1 THEN 'heatwave'
+				WHEN ds.regime_inversion = 1 THEN 'inversion'
+				WHEN ds.regime_clear_calm = 1 THEN 'clear_calm'
+				ELSE 'normal'
+			END as regime,
+			f.source,
+			COALESCE(AVG(ABS(v.bias_temp_max)), 0) as mae_max,
+			COALESCE(AVG(ABS(v.bias_temp_min)), 0) as mae_min,
+			COUNT(*) as count
+		FROM forecast_verification v
+		JOIN forecasts f ON v.forecast_id = f.id
+		LEFT JOIN daily_summaries ds ON SUBSTR(v.valid_date, 1, 10) = SUBSTR(ds.date, 1, 10)
+		LEFT JOIN stations st ON ds.station_id = st.station_id AND st.is_primary = 1
+		WHERE SUBSTR(v.valid_date, 1, 10) >= ?
+		  AND v.bias_temp_max IS NOT NULL
+		  AND ((f.source = 'wu' AND f.day_of_forecast = 1) OR (f.source = 'bom' AND f.day_of_forecast = 2))
+		  AND (ds.station_id IS NULL OR st.station_id IS NOT NULL)
+		GROUP BY regime, f.source
+		ORDER BY 
+			CASE regime
+				WHEN 'heatwave' THEN 1
+				WHEN 'inversion' THEN 2
+				WHEN 'clear_calm' THEN 3
+				ELSE 4
+			END,
+			f.source
+	`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Aggregate by regime
+	regimeMap := make(map[string]*RegimeStats)
+	regimeOrder := []string{}
+	for rows.Next() {
+		var regime, source string
+		var maeMax, maeMin float64
+		var count int
+		if err := rows.Scan(&regime, &source, &maeMax, &maeMin, &count); err != nil {
+			return nil, err
+		}
+		if _, ok := regimeMap[regime]; !ok {
+			regimeMap[regime] = &RegimeStats{Regime: regime}
+			regimeOrder = append(regimeOrder, regime)
+		}
+		rs := regimeMap[regime]
+		if source == "wu" {
+			rs.WUMAEMax = maeMax
+			rs.WUMAEMin = maeMin
+			rs.WUDays = count
+		} else if source == "bom" {
+			rs.BOMMAEMax = maeMax
+			rs.BOMMAEMin = maeMin
+			rs.BOMDays = count
+		}
+	}
+
+	var results []RegimeStats
+	for _, regime := range regimeOrder {
+		results = append(results, *regimeMap[regime])
+	}
+	return results, rows.Err()
+}
+
+// GetTodayRegime returns the regime for today (or most recent day with regime data).
+func (s *Store) GetTodayRegime(stationID string, today time.Time) (string, error) {
+	dateStr := today.Format("2006-01-02")
+	row := s.db.QueryRow(`
+		SELECT regime_heatwave, regime_inversion, regime_clear_calm
+		FROM daily_summaries
+		WHERE station_id = ? AND SUBSTR(date, 1, 10) = ?
+	`, stationID, dateStr)
+
+	var heatwave, inversion, clearCalm sql.NullBool
+	err := row.Scan(&heatwave, &inversion, &clearCalm)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	// Priority: heatwave > inversion > clear_calm
+	if heatwave.Valid && heatwave.Bool {
+		return "heatwave", nil
+	}
+	if inversion.Valid && inversion.Bool {
+		return "inversion", nil
+	}
+	if clearCalm.Valid && clearCalm.Bool {
+		return "clear_calm", nil
+	}
+	return "", nil
+}

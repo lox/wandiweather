@@ -260,6 +260,34 @@
         </div>
         {{end}}
         
+        {{if .RegimeStats}}
+        <div class="section-title">Accuracy by Weather Regime</div>
+        <div class="stats-card">
+            <table class="lead-table">
+                <thead>
+                    <tr>
+                        <th>Regime</th>
+                        <th class="wu">WU Max</th>
+                        <th class="bom">BOM Max</th>
+                        <th class="wu">WU Min</th>
+                        <th class="bom">BOM Min</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .RegimeStats}}
+                    <tr>
+                        <td class="lead">{{if .Badge}}{{.Badge}} {{end}}{{.Label}}</td>
+                        <td>{{if gt .WUDays 0}}±{{printf "%.1f" .WUMAEMax}}°{{else}}-{{end}}</td>
+                        <td>{{if gt .BOMDays 0}}±{{printf "%.1f" .BOMMAEMax}}°{{else}}-{{end}}</td>
+                        <td>{{if gt .WUDays 0}}±{{printf "%.1f" .WUMAEMin}}°{{else}}-{{end}}</td>
+                        <td>{{if gt .BOMDays 0}}±{{printf "%.1f" .BOMMAEMin}}°{{else}}-{{end}}</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{end}}
+        
         {{if .ChartLabels}}
         <div class="section-title">Max Temp Bias Over Time</div>
         <div class="stats-card">
@@ -277,6 +305,7 @@
                     <tr>
                         <th>Date</th>
                         <th>Src</th>
+                        <th></th>
                         <th>Forecast</th>
                         <th>Actual</th>
                         <th>Error</th>
@@ -287,6 +316,7 @@
                     <tr>
                         <td class="date">{{.Date}}</td>
                         <td class="source {{.Source}}">{{.Source}}</td>
+                        <td class="regime-badge" title="{{.Regime}}">{{.RegimeBadge}}</td>
                         <td class="forecast">{{printf "%.0f" .ForecastMax}}° / {{printf "%.0f" .ForecastMin}}°</td>
                         <td class="actual">{{printf "%.0f" .ActualMax}}° / {{printf "%.0f" .ActualMin}}°</td>
                         <td class="bias {{.MaxBiasClass}}">{{printf "%+.0f" .BiasMax}}°</td>
