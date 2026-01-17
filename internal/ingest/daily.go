@@ -70,6 +70,20 @@ func (d *DailyJobs) ComputeDailySummaries(forDate time.Time) error {
 		}
 	}
 
+	var middayGradient float64
+	middayTemps, err := d.store.GetMiddayTempByTier(forDate)
+	if err != nil {
+		log.Printf("daily: failed to get midday temps: %v", err)
+	} else {
+		if valleyTemp, ok := middayTemps["valley_floor"]; ok {
+			if upperTemp, ok := middayTemps["upper"]; ok {
+				middayGradient = upperTemp - valleyTemp
+				log.Printf("daily: midday gradient for %s: valley=%.1f°C upper=%.1f°C gradient=%.1f°C",
+					forDate.Format("2006-01-02"), valleyTemp, upperTemp, middayGradient)
+			}
+		}
+	}
+
 	var primaryStation *models.Station
 	for _, st := range stations {
 		if st.IsPrimary {
@@ -106,6 +120,7 @@ func (d *DailyJobs) ComputeDailySummaries(forDate time.Time) error {
 		if station.ElevationTier == "valley_floor" || station.ElevationTier == "local" {
 			summary.InversionDetected = sql.NullBool{Bool: inversionDetected, Valid: true}
 			summary.InversionStrength = sql.NullFloat64{Float64: inversionStrength, Valid: inversionDetected}
+			summary.MiddayGradient = sql.NullFloat64{Float64: middayGradient, Valid: middayGradient != 0}
 		}
 
 		if station.IsPrimary {

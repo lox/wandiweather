@@ -73,6 +73,22 @@ type DailySummary struct {
 	RegimeHeatwave    sql.NullBool
 	RegimeInversion   sql.NullBool
 	RegimeClearCalm   sql.NullBool
+
+	// Extended features for regime classification
+	WindMeanNight               sql.NullFloat64
+	WindMeanEvening             sql.NullFloat64
+	WindMeanAfternoon           sql.NullFloat64
+	CalmFractionNight           sql.NullFloat64
+	SolarIntegral               sql.NullFloat64
+	SolarMax                    sql.NullFloat64
+	SolarMiddayAvg              sql.NullFloat64
+	DewpointMin                 sql.NullFloat64
+	DewpointAvg                 sql.NullFloat64
+	DewpointDepressionAfternoon sql.NullFloat64
+	PressureChange24h           sql.NullFloat64
+	TempRise9to12               sql.NullFloat64
+	DiurnalRange                sql.NullFloat64
+	MiddayGradient              sql.NullFloat64
 }
 
 type ForecastVerification struct {

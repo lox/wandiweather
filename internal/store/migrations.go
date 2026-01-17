@@ -235,6 +235,37 @@ CREATE TABLE IF NOT EXISTS correction_performance (
 );
 `,
 	},
+	{
+		Version:     11,
+		Description: "Add extended daily summary features for regime classification",
+		SQL: `
+-- Wind timing features
+ALTER TABLE daily_summaries ADD COLUMN wind_mean_night REAL;
+ALTER TABLE daily_summaries ADD COLUMN wind_mean_evening REAL;
+ALTER TABLE daily_summaries ADD COLUMN wind_mean_afternoon REAL;
+ALTER TABLE daily_summaries ADD COLUMN calm_fraction_night REAL;
+
+-- Solar features
+ALTER TABLE daily_summaries ADD COLUMN solar_integral REAL;
+ALTER TABLE daily_summaries ADD COLUMN solar_max REAL;
+ALTER TABLE daily_summaries ADD COLUMN solar_midday_avg REAL;
+
+-- Moisture features
+ALTER TABLE daily_summaries ADD COLUMN dewpoint_min REAL;
+ALTER TABLE daily_summaries ADD COLUMN dewpoint_avg REAL;
+ALTER TABLE daily_summaries ADD COLUMN dewpoint_depression_afternoon REAL;
+
+-- Pressure trend
+ALTER TABLE daily_summaries ADD COLUMN pressure_change_24h REAL;
+
+-- Thermal behavior
+ALTER TABLE daily_summaries ADD COLUMN temp_rise_9to12 REAL;
+ALTER TABLE daily_summaries ADD COLUMN diurnal_range REAL;
+
+-- Network gradient (midday)
+ALTER TABLE daily_summaries ADD COLUMN midday_gradient REAL;
+`,
+	},
 }
 
 func (s *Store) Migrate() error {

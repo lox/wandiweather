@@ -15,56 +15,51 @@ func TestClassifyRegime_Heatwave(t *testing.T) {
 		want     bool
 	}{
 		{
-			name:     "forecast >= 32C triggers heatwave",
+			name:     "forecast >= 35C triggers heatwave",
 			forecast: &models.Forecast{TempMax: sql.NullFloat64{Float64: 35, Valid: true}},
 			prevDays: nil,
 			want:     true,
 		},
 		{
-			name:     "forecast exactly 32C triggers heatwave",
-			forecast: &models.Forecast{TempMax: sql.NullFloat64{Float64: 32, Valid: true}},
-			prevDays: nil,
-			want:     true,
-		},
-		{
-			name:     "forecast 31C does not trigger heatwave alone",
-			forecast: &models.Forecast{TempMax: sql.NullFloat64{Float64: 31, Valid: true}},
+			name:     "forecast 34C does not trigger heatwave alone",
+			forecast: &models.Forecast{TempMax: sql.NullFloat64{Float64: 34, Valid: true}},
 			prevDays: nil,
 			want:     false,
 		},
 		{
-			name:     "previous day >= 30C triggers heatwave",
+			name:     "two consecutive days >= 32C triggers heatwave",
 			forecast: &models.Forecast{TempMax: sql.NullFloat64{Float64: 28, Valid: true}},
 			prevDays: []models.DailySummary{
+				{TempMax: sql.NullFloat64{Float64: 33, Valid: true}},
+				{TempMax: sql.NullFloat64{Float64: 32, Valid: true}},
+			},
+			want: true,
+		},
+		{
+			name:     "only one day >= 32C does not trigger heatwave",
+			forecast: &models.Forecast{TempMax: sql.NullFloat64{Float64: 25, Valid: true}},
+			prevDays: []models.DailySummary{
+				{TempMax: sql.NullFloat64{Float64: 33, Valid: true}},
 				{TempMax: sql.NullFloat64{Float64: 30, Valid: true}},
-			},
-			want: true,
-		},
-		{
-			name:     "2-day avg >= 28C triggers heatwave",
-			forecast: &models.Forecast{TempMax: sql.NullFloat64{Float64: 25, Valid: true}},
-			prevDays: []models.DailySummary{
-				{TempMax: sql.NullFloat64{Float64: 29, Valid: true}},
-				{TempMax: sql.NullFloat64{Float64: 27, Valid: true}},
-			},
-			want: true,
-		},
-		{
-			name:     "2-day avg < 28C does not trigger heatwave",
-			forecast: &models.Forecast{TempMax: sql.NullFloat64{Float64: 25, Valid: true}},
-			prevDays: []models.DailySummary{
-				{TempMax: sql.NullFloat64{Float64: 27, Valid: true}},
-				{TempMax: sql.NullFloat64{Float64: 27, Valid: true}},
 			},
 			want: false,
 		},
 		{
-			name:     "nil forecast with hot previous day",
+			name:     "nil forecast with two hot days",
 			forecast: nil,
 			prevDays: []models.DailySummary{
 				{TempMax: sql.NullFloat64{Float64: 32, Valid: true}},
+				{TempMax: sql.NullFloat64{Float64: 34, Valid: true}},
 			},
 			want: true,
+		},
+		{
+			name:     "only one previous day does not trigger",
+			forecast: nil,
+			prevDays: []models.DailySummary{
+				{TempMax: sql.NullFloat64{Float64: 35, Valid: true}},
+			},
+			want: false,
 		},
 	}
 

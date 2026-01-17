@@ -117,8 +117,36 @@ func (s *Store) InsertForecast(f models.Forecast) error {
 }
 
 func (s *Store) ComputeDailySummary(stationID string, date time.Time) (*models.DailySummary, error) {
-	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
-	endOfDay := startOfDay.Add(24 * time.Hour)
+	loc, err := time.LoadLocation("Australia/Melbourne")
+	if err != nil {
+		return nil, fmt.Errorf("load Melbourne timezone: %w", err)
+	}
+
+	localDate := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc)
+
+	y, m, d := localDate.Date()
+
+	dayStart := localDate.UTC()
+	dayEnd := time.Date(y, m, d+1, 0, 0, 0, 0, loc).UTC()
+
+	nightStart := time.Date(y, m, d-1, 18, 0, 0, 0, loc).UTC() // 6pm previous day
+	nightEnd := time.Date(y, m, d, 6, 0, 0, 0, loc).UTC()      // 6am
+
+	eveningStart := time.Date(y, m, d-1, 18, 0, 0, 0, loc).UTC() // 6pm previous day
+	eveningEnd := localDate.UTC()                                 // midnight
+
+	afternoonStart := time.Date(y, m, d, 12, 0, 0, 0, loc).UTC()
+	afternoonEnd := time.Date(y, m, d, 18, 0, 0, 0, loc).UTC()
+
+	middayStart := time.Date(y, m, d, 11, 0, 0, 0, loc).UTC()
+	middayEnd := time.Date(y, m, d, 15, 0, 0, 0, loc).UTC()
+
+	time9am := time.Date(y, m, d, 9, 0, 0, 0, loc).UTC()
+	time12pm := time.Date(y, m, d, 12, 0, 0, 0, loc).UTC()
+
+	var summary models.DailySummary
+	summary.Date = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
+	summary.StationID = stationID
 
 	row := s.db.QueryRow(`
 		SELECT 
@@ -127,28 +155,158 @@ func (s *Store) ComputeDailySummary(stationID string, date time.Time) (*models.D
 			AVG(temp) as temp_avg,
 			AVG(humidity) as humidity_avg,
 			AVG(pressure) as pressure_avg,
-			SUM(precip_total) as precip_total,
+			MAX(precip_total) as precip_total,
 			MAX(wind_gust) as wind_max_gust
 		FROM observations
-		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND temp IS NOT NULL
-	`, stationID, startOfDay, endOfDay)
+		WHERE station_id = ? AND observed_at >= ? AND observed_at < ?
+	`, stationID, dayStart, dayEnd)
 
-	var summary models.DailySummary
-	summary.Date = startOfDay
-	summary.StationID = stationID
-
-	err := row.Scan(&summary.TempMax, &summary.TempMin, &summary.TempAvg, &summary.HumidityAvg, &summary.PressureAvg, &summary.PrecipTotal, &summary.WindMaxGust)
-	if err != nil {
+	if err := row.Scan(&summary.TempMax, &summary.TempMin, &summary.TempAvg, &summary.HumidityAvg, &summary.PressureAvg, &summary.PrecipTotal, &summary.WindMaxGust); err != nil {
 		return nil, err
 	}
 
-	if err := s.db.QueryRow(`SELECT observed_at FROM observations WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND temp = ? LIMIT 1`,
-		stationID, startOfDay, endOfDay, summary.TempMax).Scan(&summary.TempMaxTime); err != nil && err != sql.ErrNoRows {
-		return nil, fmt.Errorf("lookup max temp time: %w", err)
+	if summary.TempMax.Valid {
+		if err := s.db.QueryRow(`SELECT observed_at FROM observations WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND temp IS NOT NULL ORDER BY temp DESC, observed_at ASC LIMIT 1`,
+			stationID, dayStart, dayEnd).Scan(&summary.TempMaxTime); err != nil && err != sql.ErrNoRows {
+			return nil, fmt.Errorf("lookup max temp time: %w", err)
+		}
 	}
-	if err := s.db.QueryRow(`SELECT observed_at FROM observations WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND temp = ? LIMIT 1`,
-		stationID, startOfDay, endOfDay, summary.TempMin).Scan(&summary.TempMinTime); err != nil && err != sql.ErrNoRows {
-		return nil, fmt.Errorf("lookup min temp time: %w", err)
+	if summary.TempMin.Valid {
+		if err := s.db.QueryRow(`SELECT observed_at FROM observations WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND temp IS NOT NULL ORDER BY temp ASC, observed_at ASC LIMIT 1`,
+			stationID, dayStart, dayEnd).Scan(&summary.TempMinTime); err != nil && err != sql.ErrNoRows {
+			return nil, fmt.Errorf("lookup min temp time: %w", err)
+		}
+	}
+
+	if summary.TempMax.Valid && summary.TempMin.Valid {
+		summary.DiurnalRange = sql.NullFloat64{Float64: summary.TempMax.Float64 - summary.TempMin.Float64, Valid: true}
+	}
+
+	const calmThreshold = 1.5
+
+	if err := s.db.QueryRow(`
+		SELECT AVG(wind_speed)
+		FROM observations
+		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND wind_speed IS NOT NULL
+	`, stationID, nightStart, nightEnd).Scan(&summary.WindMeanNight); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("wind mean night: %w", err)
+	}
+
+	if err := s.db.QueryRow(`
+		SELECT AVG(wind_speed)
+		FROM observations
+		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND wind_speed IS NOT NULL
+	`, stationID, eveningStart, eveningEnd).Scan(&summary.WindMeanEvening); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("wind mean evening: %w", err)
+	}
+
+	if err := s.db.QueryRow(`
+		SELECT AVG(wind_speed)
+		FROM observations
+		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND wind_speed IS NOT NULL
+	`, stationID, afternoonStart, afternoonEnd).Scan(&summary.WindMeanAfternoon); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("wind mean afternoon: %w", err)
+	}
+
+	var calmCount, totalCount sql.NullInt64
+	if err := s.db.QueryRow(`
+		SELECT 
+			SUM(CASE WHEN wind_speed < ? THEN 1 ELSE 0 END),
+			COUNT(*)
+		FROM observations
+		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND wind_speed IS NOT NULL
+	`, calmThreshold, stationID, nightStart, nightEnd).Scan(&calmCount, &totalCount); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("calm fraction night: %w", err)
+	}
+	if totalCount.Valid && totalCount.Int64 > 0 {
+		summary.CalmFractionNight = sql.NullFloat64{Float64: float64(calmCount.Int64) / float64(totalCount.Int64), Valid: true}
+	}
+
+	if err := s.db.QueryRow(`
+		SELECT SUM(solar_radiation * 300) / 1000000.0
+		FROM observations
+		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND solar_radiation IS NOT NULL
+	`, stationID, dayStart, dayEnd).Scan(&summary.SolarIntegral); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("solar integral: %w", err)
+	}
+
+	if err := s.db.QueryRow(`
+		SELECT MAX(solar_radiation)
+		FROM observations
+		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND solar_radiation IS NOT NULL
+	`, stationID, dayStart, dayEnd).Scan(&summary.SolarMax); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("solar max: %w", err)
+	}
+
+	if err := s.db.QueryRow(`
+		SELECT AVG(solar_radiation)
+		FROM observations
+		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND solar_radiation IS NOT NULL
+	`, stationID, middayStart, middayEnd).Scan(&summary.SolarMiddayAvg); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("solar midday avg: %w", err)
+	}
+
+	if err := s.db.QueryRow(`
+		SELECT MIN(dewpoint)
+		FROM observations
+		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND dewpoint IS NOT NULL
+	`, stationID, dayStart, dayEnd).Scan(&summary.DewpointMin); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("dewpoint min: %w", err)
+	}
+
+	if err := s.db.QueryRow(`
+		SELECT AVG(dewpoint)
+		FROM observations
+		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND dewpoint IS NOT NULL
+	`, stationID, dayStart, dayEnd).Scan(&summary.DewpointAvg); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("dewpoint avg: %w", err)
+	}
+
+	if err := s.db.QueryRow(`
+		SELECT AVG(temp - dewpoint)
+		FROM observations
+		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND temp IS NOT NULL AND dewpoint IS NOT NULL
+	`, stationID, afternoonStart, afternoonEnd).Scan(&summary.DewpointDepressionAfternoon); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("dewpoint depression afternoon: %w", err)
+	}
+
+	yesterdayStart := time.Date(y, m, d-1, 0, 0, 0, 0, loc).UTC()
+	yesterdayEnd := localDate.UTC()
+	var yesterdayPressureAvg sql.NullFloat64
+	if err := s.db.QueryRow(`
+		SELECT AVG(pressure)
+		FROM observations
+		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND pressure IS NOT NULL
+	`, stationID, yesterdayStart, yesterdayEnd).Scan(&yesterdayPressureAvg); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("yesterday pressure avg: %w", err)
+	}
+	if summary.PressureAvg.Valid && yesterdayPressureAvg.Valid {
+		summary.PressureChange24h = sql.NullFloat64{Float64: summary.PressureAvg.Float64 - yesterdayPressureAvg.Float64, Valid: true}
+	}
+
+	var temp9am, temp12pm sql.NullFloat64
+	time9amUnix := time9am.Unix()
+	time12pmUnix := time12pm.Unix()
+	if err := s.db.QueryRow(`
+		SELECT temp
+		FROM observations
+		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND temp IS NOT NULL
+		ORDER BY ABS(strftime('%s', substr(observed_at, 1, 19)) - ?)
+		LIMIT 1
+	`, stationID, dayStart, dayEnd, time9amUnix).Scan(&temp9am); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("temp at 9am: %w", err)
+	}
+	if err := s.db.QueryRow(`
+		SELECT temp
+		FROM observations
+		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND temp IS NOT NULL
+		ORDER BY ABS(strftime('%s', substr(observed_at, 1, 19)) - ?)
+		LIMIT 1
+	`, stationID, dayStart, dayEnd, time12pmUnix).Scan(&temp12pm); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("temp at 12pm: %w", err)
+	}
+	if temp9am.Valid && temp12pm.Valid {
+		summary.TempRise9to12 = sql.NullFloat64{Float64: temp12pm.Float64 - temp9am.Float64, Valid: true}
 	}
 
 	return &summary, nil
@@ -158,8 +316,12 @@ func (s *Store) UpsertDailySummary(ds models.DailySummary) error {
 	_, err := s.db.Exec(`
 		INSERT INTO daily_summaries (date, station_id, temp_max, temp_max_time, temp_min, temp_min_time, 
 		    temp_avg, humidity_avg, pressure_avg, precip_total, wind_max_gust, 
-		    inversion_detected, inversion_strength, regime_heatwave, regime_inversion, regime_clear_calm)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		    inversion_detected, inversion_strength, regime_heatwave, regime_inversion, regime_clear_calm,
+		    wind_mean_night, wind_mean_evening, wind_mean_afternoon, calm_fraction_night,
+		    solar_integral, solar_max, solar_midday_avg,
+		    dewpoint_min, dewpoint_avg, dewpoint_depression_afternoon,
+		    pressure_change_24h, temp_rise_9to12, diurnal_range, midday_gradient)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(date, station_id) DO UPDATE SET
 			temp_max = excluded.temp_max,
 			temp_max_time = excluded.temp_max_time,
@@ -174,10 +336,28 @@ func (s *Store) UpsertDailySummary(ds models.DailySummary) error {
 			inversion_strength = excluded.inversion_strength,
 			regime_heatwave = excluded.regime_heatwave,
 			regime_inversion = excluded.regime_inversion,
-			regime_clear_calm = excluded.regime_clear_calm
+			regime_clear_calm = excluded.regime_clear_calm,
+			wind_mean_night = excluded.wind_mean_night,
+			wind_mean_evening = excluded.wind_mean_evening,
+			wind_mean_afternoon = excluded.wind_mean_afternoon,
+			calm_fraction_night = excluded.calm_fraction_night,
+			solar_integral = excluded.solar_integral,
+			solar_max = excluded.solar_max,
+			solar_midday_avg = excluded.solar_midday_avg,
+			dewpoint_min = excluded.dewpoint_min,
+			dewpoint_avg = excluded.dewpoint_avg,
+			dewpoint_depression_afternoon = excluded.dewpoint_depression_afternoon,
+			pressure_change_24h = excluded.pressure_change_24h,
+			temp_rise_9to12 = excluded.temp_rise_9to12,
+			diurnal_range = excluded.diurnal_range,
+			midday_gradient = excluded.midday_gradient
 	`, ds.Date, ds.StationID, ds.TempMax, ds.TempMaxTime, ds.TempMin, ds.TempMinTime,
 		ds.TempAvg, ds.HumidityAvg, ds.PressureAvg, ds.PrecipTotal, ds.WindMaxGust,
-		ds.InversionDetected, ds.InversionStrength, ds.RegimeHeatwave, ds.RegimeInversion, ds.RegimeClearCalm)
+		ds.InversionDetected, ds.InversionStrength, ds.RegimeHeatwave, ds.RegimeInversion, ds.RegimeClearCalm,
+		ds.WindMeanNight, ds.WindMeanEvening, ds.WindMeanAfternoon, ds.CalmFractionNight,
+		ds.SolarIntegral, ds.SolarMax, ds.SolarMiddayAvg,
+		ds.DewpointMin, ds.DewpointAvg, ds.DewpointDepressionAfternoon,
+		ds.PressureChange24h, ds.TempRise9to12, ds.DiurnalRange, ds.MiddayGradient)
 	return err
 }
 
@@ -245,8 +425,11 @@ func (s *Store) GetObservationDates(stationID string) ([]time.Time, error) {
 }
 
 func (s *Store) GetOvernightMinByTier(date time.Time) (map[string]float64, error) {
-	startUTC := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC).Add(-11 * time.Hour)
-	endUTC := startUTC.Add(8 * time.Hour)
+	localDate := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, s.loc)
+	y, m, d := localDate.Date()
+
+	startUTC := time.Date(y, m, d-1, 21, 0, 0, 0, s.loc).UTC() // 9pm previous day
+	endUTC := time.Date(y, m, d, 5, 0, 0, 0, s.loc).UTC()      // 5am
 
 	rows, err := s.db.Query(`
 		SELECT s.elevation_tier, MIN(o.temp) as min_temp
@@ -270,6 +453,38 @@ func (s *Store) GetOvernightMinByTier(date time.Time) (map[string]float64, error
 			return nil, err
 		}
 		result[tier] = minTemp
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) GetMiddayTempByTier(date time.Time) (map[string]float64, error) {
+	localDate := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, s.loc)
+
+	middayStart := localDate.Add(11 * time.Hour).UTC()
+	middayEnd := localDate.Add(15 * time.Hour).UTC()
+
+	rows, err := s.db.Query(`
+		SELECT s.elevation_tier, AVG(o.temp) as avg_temp
+		FROM observations o
+		JOIN stations s ON o.station_id = s.station_id
+		WHERE s.active = TRUE
+		  AND o.temp IS NOT NULL
+		  AND o.observed_at >= ? AND o.observed_at < ?
+		GROUP BY s.elevation_tier
+	`, middayStart, middayEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]float64)
+	for rows.Next() {
+		var tier string
+		var avgTemp float64
+		if err := rows.Scan(&tier, &avgTemp); err != nil {
+			return nil, err
+		}
+		result[tier] = avgTemp
 	}
 	return result, rows.Err()
 }
@@ -350,14 +565,17 @@ type DayActuals struct {
 }
 
 func (s *Store) GetActualsForDate(stationID string, date time.Time) (*DayActuals, error) {
-	startUTC := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC).Add(-11 * time.Hour)
-	endUTC := startUTC.Add(24 * time.Hour)
+	localDate := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, s.loc)
+	y, m, d := localDate.Date()
+
+	startUTC := localDate.UTC()
+	endUTC := time.Date(y, m, d+1, 0, 0, 0, 0, s.loc).UTC()
 
 	var a DayActuals
 	err := s.db.QueryRow(`
 		SELECT MAX(temp), MIN(temp), MAX(wind_gust), MAX(precip_total)
 		FROM observations
-		WHERE station_id = ? AND observed_at >= ? AND observed_at < ? AND temp IS NOT NULL
+		WHERE station_id = ? AND observed_at >= ? AND observed_at < ?
 	`, stationID, startUTC, endUTC).Scan(&a.TempMax, &a.TempMin, &a.WindGust, &a.PrecipSum)
 	if err != nil {
 		return nil, err
@@ -424,7 +642,8 @@ func (s *Store) GetTodayStats(stationID string, localDate time.Time) (minTemp, m
 }
 
 func (s *Store) GetTodayStatsExtended(stationID string, localDate time.Time) (*TodayStatsResult, error) {
-	startUTC := time.Date(localDate.Year(), localDate.Month(), localDate.Day(), 0, 0, 0, 0, time.UTC).Add(-11 * time.Hour)
+	dayStart := time.Date(localDate.Year(), localDate.Month(), localDate.Day(), 0, 0, 0, 0, s.loc)
+	startUTC := dayStart.UTC()
 	endUTC := time.Now().UTC()
 
 	result := &TodayStatsResult{}
@@ -432,7 +651,7 @@ func (s *Store) GetTodayStatsExtended(stationID string, localDate time.Time) (*T
 	err := s.db.QueryRow(`
 		SELECT MIN(temp), MAX(temp), MAX(precip_total), MAX(wind_speed), MAX(wind_gust)
 		FROM observations
-		WHERE station_id = ? AND observed_at >= ? AND observed_at <= ? AND temp IS NOT NULL
+		WHERE station_id = ? AND observed_at >= ? AND observed_at <= ?
 	`, stationID, startUTC, endUTC).Scan(&result.MinTemp, &result.MaxTemp, &result.RainTotal, &result.MaxWind, &result.MaxGust)
 	if err != nil {
 		return nil, err
@@ -441,17 +660,17 @@ func (s *Store) GetTodayStatsExtended(stationID string, localDate time.Time) (*T
 	if result.MinTemp.Valid {
 		s.db.QueryRow(`
 			SELECT observed_at FROM observations
-			WHERE station_id = ? AND observed_at >= ? AND observed_at <= ? AND temp = ?
-			ORDER BY observed_at LIMIT 1
-		`, stationID, startUTC, endUTC, result.MinTemp.Float64).Scan(&result.MinTempTime)
+			WHERE station_id = ? AND observed_at >= ? AND observed_at <= ? AND temp IS NOT NULL
+			ORDER BY temp ASC, observed_at ASC LIMIT 1
+		`, stationID, startUTC, endUTC).Scan(&result.MinTempTime)
 	}
 
 	if result.MaxTemp.Valid {
 		s.db.QueryRow(`
 			SELECT observed_at FROM observations
-			WHERE station_id = ? AND observed_at >= ? AND observed_at <= ? AND temp = ?
-			ORDER BY observed_at DESC LIMIT 1
-		`, stationID, startUTC, endUTC, result.MaxTemp.Float64).Scan(&result.MaxTempTime)
+			WHERE station_id = ? AND observed_at >= ? AND observed_at <= ? AND temp IS NOT NULL
+			ORDER BY temp DESC, observed_at ASC LIMIT 1
+		`, stationID, startUTC, endUTC).Scan(&result.MaxTempTime)
 	}
 
 	return result, nil
