@@ -253,13 +253,18 @@ func (d *DailyJobs) BackfillSummaries() error {
 	}
 
 	if len(stations) == 0 {
+		log.Println("daily: no active stations found")
 		return nil
 	}
+
+	log.Printf("daily: found %d active stations, using %s for date range", len(stations), stations[0].StationID)
 
 	dates, err := d.store.GetObservationDates(stations[0].StationID)
 	if err != nil {
 		return err
 	}
+
+	log.Printf("daily: found %d dates to backfill", len(dates))
 
 	for _, date := range dates {
 		if err := d.ComputeDailySummaries(date); err != nil {
