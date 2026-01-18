@@ -842,7 +842,7 @@ func regimeBadge(regime string) string {
 	case "heatwave":
 		return "🔥"
 	case "inversion":
-		return "❄️"
+		return "🏔️"
 	case "clear_calm":
 		return "☀️"
 	default:
