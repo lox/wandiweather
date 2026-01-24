@@ -1061,7 +1061,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		Stations: make([]StationHealth, 0, len(stations)),
 	}
 
-	staleThreshold := 15 * time.Minute
+	staleThreshold := 60 * time.Minute
 	now := time.Now()
 
 	for _, st := range stations {
