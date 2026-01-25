@@ -29,7 +29,7 @@
 <!-- TODAY: Forecast -->
 {{if .TodayForecast}}
 <div class="today-forecast">
-    <div class="forecast-header">Today's Forecast</div>
+    <div class="forecast-header" onclick="document.getElementById('forecast-explain').classList.toggle('show')">Today's Forecast <span class="info-icon" title="Click for details">ⓘ</span></div>
     <div class="forecast-narrative">{{.TodayForecast.Narrative}}</div>
     <div class="forecast-range">
         <div class="range-item">
@@ -46,6 +46,26 @@
             <span class="range-label">Rain</span>
         </div>
         {{end}}
+    </div>
+    <div id="forecast-explain" class="forecast-explanation">
+        <div class="explain-title">How this forecast is calculated</div>
+        <div class="explain-row">
+            <span class="explain-label">High:</span>
+            <span class="explain-value">
+                {{printf "%.0f" .TodayForecast.Explanation.MaxRaw}}° ({{.TodayForecast.Explanation.MaxSource | upper}})
+                {{if ne .TodayForecast.Explanation.MaxBiasApplied 0.0}} → {{printf "%+.1f" (neg .TodayForecast.Explanation.MaxBiasApplied)}}° bias{{end}}
+                {{if .TodayForecast.NowcastApplied}} → {{printf "%+.1f" .TodayForecast.Explanation.MaxNowcast}}° nowcast{{end}}
+                = <strong>{{printf "%.0f" .TodayForecast.Explanation.MaxFinal}}°</strong>
+            </span>
+        </div>
+        <div class="explain-row">
+            <span class="explain-label">Low:</span>
+            <span class="explain-value">
+                {{printf "%.0f" .TodayForecast.Explanation.MinRaw}}° ({{.TodayForecast.Explanation.MinSource | upper}})
+                {{if ne .TodayForecast.Explanation.MinBiasApplied 0.0}} → {{printf "%+.1f" (neg .TodayForecast.Explanation.MinBiasApplied)}}° bias{{end}}
+                = <strong>{{printf "%.0f" .TodayForecast.Explanation.MinFinal}}°</strong>
+            </span>
+        </div>
     </div>
     {{if .TodayStats}}
     <div class="observed-progress">

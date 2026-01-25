@@ -51,6 +51,10 @@ func NewServer(store *store.Store, port string, loc *time.Location) *Server {
 			}
 			return f
 		},
+		"neg": func(f float64) float64 {
+			return -f
+		},
+		"upper": strings.ToUpper,
 	}
 	tmpl := template.Must(template.New("").Funcs(funcs).ParseFS(templateFS, "templates/*.html"))
 
@@ -191,6 +195,20 @@ type TodayForecast struct {
 	PrecipAmount      float64
 	Narrative         string
 	HasPrecip         bool
+	// Explanation tracks how the forecast was calculated
+	Explanation       ForecastExplanation
+}
+
+type ForecastExplanation struct {
+	MaxSource       string  // "bom" or "wu"
+	MaxRaw          float64 // raw forecast value
+	MaxBiasApplied  float64 // bias correction applied
+	MaxNowcast      float64 // nowcast adjustment (if any)
+	MaxFinal        float64 // final displayed value
+	MinSource       string
+	MinRaw          float64
+	MinBiasApplied  float64
+	MinFinal        float64
 }
 
 type TodayStats struct {
@@ -363,71 +381,120 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 			}
 		}
 
+		todayStr := todayDate.Format("2006-01-02")
+
+		// Find today's forecasts from both sources
+		var wuForecast, bomForecast *models.Forecast
 		for _, fc := range forecasts["wu"] {
-			fcDate := fc.ValidDate.Format("2006-01-02")
-			todayStr := todayDate.Format("2006-01-02")
-			if fcDate == todayStr {
-				tf := &TodayForecast{}
-
-				if fc.TempMax.Valid {
-					tf.TempMax = fc.TempMax.Float64
-					if bias := getCorrectionBias(correctionStats, "wu", "tmax", fc.DayOfForecast); bias != 0 {
-						tf.TempMax = fc.TempMax.Float64 - bias
-					}
-					tf.TempMaxRaw = math.Round(tf.TempMax)
-
-					if fc.DayOfForecast == 0 && primaryStationID != "" {
-						biasMax := biasCorrector.GetCorrection("wu", "tmax", 0)
-						nowcast, err := nowcaster.ComputeNowcast(primaryStationID, fc.TempMax.Float64, biasMax)
-						if err == nil && nowcast != nil {
-							tf.TempMax = nowcast.CorrectedMax
-							tf.NowcastApplied = true
-							tf.NowcastAdjustment = nowcast.Adjustment
-							if err := nowcaster.LogNowcast(primaryStationID, fc.TempMax.Float64, nowcast); err != nil {
-								log.Printf("api: log nowcast: %v", err)
-							}
-						}
-					}
-
-					tf.TempMax = math.Round(tf.TempMax)
-				}
-				if fc.TempMin.Valid {
-					tf.TempMin = fc.TempMin.Float64
-					if bias := getCorrectionBias(correctionStats, "wu", "tmin", fc.DayOfForecast); bias != 0 {
-						tf.TempMin = fc.TempMin.Float64 - bias
-					}
-					tf.TempMin = math.Round(tf.TempMin)
-				}
-
-				if fc.PrecipChance.Valid {
-					tf.PrecipChance = fc.PrecipChance.Int64
-					tf.HasPrecip = fc.PrecipChance.Int64 > 10
-				}
-				if fc.PrecipAmount.Valid {
-					tf.PrecipAmount = fc.PrecipAmount.Float64
-				}
-
-				var bomForecast *models.Forecast
-				for _, bfc := range forecasts["bom"] {
-					if bfc.ValidDate.Format("2006-01-02") == todayStr {
-						b := bfc
-						bomForecast = &b
-						break
-					}
-				}
-				wuFc := fc
-				day := &ForecastDay{WU: &wuFc, BOM: bomForecast}
-				if fc.TempMax.Valid {
-					day.WUCorrectedMax = &tf.TempMax
-				}
-				if fc.TempMin.Valid {
-					day.WUCorrectedMin = &tf.TempMin
-				}
-				tf.Narrative = buildGeneratedNarrative(day)
-
-				data.TodayForecast = tf
+			if fc.ValidDate.Format("2006-01-02") == todayStr {
+				f := fc
+				wuForecast = &f
 				break
 			}
+		}
+		for _, fc := range forecasts["bom"] {
+			if fc.ValidDate.Format("2006-01-02") == todayStr {
+				f := fc
+				bomForecast = &f
+				break
+			}
+		}
+
+		if wuForecast != nil || bomForecast != nil {
+			tf := &TodayForecast{}
+			exp := &tf.Explanation
+
+			// MAX TEMP: prefer BOM (better accuracy)
+			if bomForecast != nil && bomForecast.TempMax.Valid {
+				exp.MaxSource = "bom"
+				exp.MaxRaw = bomForecast.TempMax.Float64
+				tf.TempMax = bomForecast.TempMax.Float64
+
+				if bias := getCorrectionBias(correctionStats, "bom", "tmax", bomForecast.DayOfForecast); bias != 0 {
+					exp.MaxBiasApplied = bias
+					tf.TempMax = bomForecast.TempMax.Float64 - bias
+				}
+				tf.TempMaxRaw = math.Round(tf.TempMax)
+
+				// Nowcast using BOM as base
+				if bomForecast.DayOfForecast == 0 && primaryStationID != "" {
+					biasMax := biasCorrector.GetCorrection("bom", "tmax", 0)
+					nowcast, err := nowcaster.ComputeNowcast(primaryStationID, bomForecast.TempMax.Float64, biasMax)
+					if err == nil && nowcast != nil {
+						exp.MaxNowcast = nowcast.Adjustment
+						tf.TempMax = nowcast.CorrectedMax
+						tf.NowcastApplied = true
+						tf.NowcastAdjustment = nowcast.Adjustment
+						if err := nowcaster.LogNowcast(primaryStationID, bomForecast.TempMax.Float64, nowcast); err != nil {
+							log.Printf("api: log nowcast: %v", err)
+						}
+					}
+				}
+				tf.TempMax = math.Round(tf.TempMax)
+				exp.MaxFinal = tf.TempMax
+			} else if wuForecast != nil && wuForecast.TempMax.Valid {
+				// Fallback to WU if BOM unavailable
+				exp.MaxSource = "wu"
+				exp.MaxRaw = wuForecast.TempMax.Float64
+				tf.TempMax = wuForecast.TempMax.Float64
+
+				if bias := getCorrectionBias(correctionStats, "wu", "tmax", wuForecast.DayOfForecast); bias != 0 {
+					exp.MaxBiasApplied = bias
+					tf.TempMax = wuForecast.TempMax.Float64 - bias
+				}
+				tf.TempMaxRaw = math.Round(tf.TempMax)
+				tf.TempMax = math.Round(tf.TempMax)
+				exp.MaxFinal = tf.TempMax
+			}
+
+			// MIN TEMP: prefer WU (better accuracy)
+			if wuForecast != nil && wuForecast.TempMin.Valid {
+				exp.MinSource = "wu"
+				exp.MinRaw = wuForecast.TempMin.Float64
+				tf.TempMin = wuForecast.TempMin.Float64
+
+				if bias := getCorrectionBias(correctionStats, "wu", "tmin", wuForecast.DayOfForecast); bias != 0 {
+					exp.MinBiasApplied = bias
+					tf.TempMin = wuForecast.TempMin.Float64 - bias
+				}
+				tf.TempMin = math.Round(tf.TempMin)
+				exp.MinFinal = tf.TempMin
+			} else if bomForecast != nil && bomForecast.TempMin.Valid {
+				// Fallback to BOM if WU unavailable
+				exp.MinSource = "bom"
+				exp.MinRaw = bomForecast.TempMin.Float64
+				tf.TempMin = bomForecast.TempMin.Float64
+
+				if bias := getCorrectionBias(correctionStats, "bom", "tmin", bomForecast.DayOfForecast); bias != 0 {
+					exp.MinBiasApplied = bias
+					tf.TempMin = bomForecast.TempMin.Float64 - bias
+				}
+				tf.TempMin = math.Round(tf.TempMin)
+				exp.MinFinal = tf.TempMin
+			}
+
+			// Precip from WU (has more detail)
+			if wuForecast != nil {
+				if wuForecast.PrecipChance.Valid {
+					tf.PrecipChance = wuForecast.PrecipChance.Int64
+					tf.HasPrecip = wuForecast.PrecipChance.Int64 > 10
+				}
+				if wuForecast.PrecipAmount.Valid {
+					tf.PrecipAmount = wuForecast.PrecipAmount.Float64
+				}
+			}
+
+			// Build narrative
+			day := &ForecastDay{WU: wuForecast, BOM: bomForecast}
+			if bomForecast != nil && bomForecast.TempMax.Valid {
+				day.BOMCorrectedMax = &tf.TempMax
+			}
+			if wuForecast != nil && wuForecast.TempMin.Valid {
+				day.WUCorrectedMin = &tf.TempMin
+			}
+			tf.Narrative = buildGeneratedNarrative(day)
+
+			data.TodayForecast = tf
 		}
 	}
 

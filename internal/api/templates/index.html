@@ -72,7 +72,29 @@
             text-transform: uppercase;
             letter-spacing: 0.05em;
             margin-bottom: 0.5rem;
+            cursor: pointer;
         }
+        .forecast-explanation {
+            display: none;
+            background: rgba(0,0,0,0.2);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            margin-top: 1rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+        .forecast-explanation.show { display: block; }
+        .explain-title {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+            opacity: 0.7;
+        }
+        .explain-row { margin: 0.25rem 0; }
+        .explain-label { font-weight: 500; margin-right: 0.5rem; }
+        .explain-value strong { color: var(--text); }
+        .info-icon { opacity: 0.5; font-size: 0.9em; }
         .forecast-narrative {
             font-size: 1rem;
             color: var(--text);
