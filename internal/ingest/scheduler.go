@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lox/wandiweather/internal/emergency"
 	"github.com/lox/wandiweather/internal/forecast"
 	"github.com/lox/wandiweather/internal/imagegen"
 	"github.com/lox/wandiweather/internal/models"
@@ -13,32 +14,39 @@ import (
 )
 
 type Scheduler struct {
-	store       *store.Store
-	pws         *PWS
-	forecast    *ForecastClient
-	bom         *BOMClient
-	daily       *DailyJobs
-	stationIDs  []string
-	loc         *time.Location
-	obsInterval time.Duration
-	fcInterval  time.Duration
-	imageGen    *imagegen.Generator
-	imageCache  *imagegen.Cache
-	imageGenMu  *sync.Mutex // Shared with server to prevent duplicate API calls
+	store           *store.Store
+	pws             *PWS
+	forecast        *ForecastClient
+	bom             *BOMClient
+	daily           *DailyJobs
+	stationIDs      []string
+	loc             *time.Location
+	obsInterval     time.Duration
+	fcInterval      time.Duration
+	imageGen        *imagegen.Generator
+	imageCache      *imagegen.Cache
+	imageGenMu      *sync.Mutex // Shared with server to prevent duplicate API calls
+	emergencyClient *emergency.Client
 }
 
 func NewScheduler(store *store.Store, pws *PWS, forecast *ForecastClient, stationIDs []string, loc *time.Location) *Scheduler {
 	return &Scheduler{
-		store:       store,
-		pws:         pws,
-		forecast:    forecast,
-		bom:         NewBOMClient(""),
-		daily:       NewDailyJobs(store),
-		stationIDs:  stationIDs,
-		loc:         loc,
-		obsInterval: 10 * time.Minute,
-		fcInterval:  6 * time.Hour,
+		store:           store,
+		pws:             pws,
+		forecast:        forecast,
+		bom:             NewBOMClient(""),
+		daily:           NewDailyJobs(store),
+		stationIDs:      stationIDs,
+		loc:             loc,
+		obsInterval:     10 * time.Minute,
+		fcInterval:      6 * time.Hour,
+		emergencyClient: nil, // Set via SetEmergencyClient
 	}
+}
+
+// SetEmergencyClient configures the scheduler to poll for emergency alerts.
+func (s *Scheduler) SetEmergencyClient(client *emergency.Client) {
+	s.emergencyClient = client
 }
 
 // SetImageGenerator configures the scheduler to pre-generate weather images after forecast ingestion.
@@ -52,15 +60,18 @@ func (s *Scheduler) SetImageGenerator(gen *imagegen.Generator, cache *imagegen.C
 func (s *Scheduler) Run(ctx context.Context) {
 	s.ingestObservations()
 	s.ingestForecasts()
+	s.ingestAlerts()
 	s.runDailyJobsIfNeeded()
 	s.checkWeatherImage()
 
 	obsTicker := time.NewTicker(s.obsInterval)
 	fcTicker := time.NewTicker(s.fcInterval)
+	alertTicker := time.NewTicker(5 * time.Minute) // Poll alerts every 5 mins
 	dailyTicker := time.NewTicker(1 * time.Hour)
 	imageTicker := time.NewTicker(1 * time.Hour) // Check hourly for time-of-day transitions
 	defer obsTicker.Stop()
 	defer fcTicker.Stop()
+	defer alertTicker.Stop()
 	defer dailyTicker.Stop()
 	defer imageTicker.Stop()
 
@@ -73,6 +84,8 @@ func (s *Scheduler) Run(ctx context.Context) {
 			s.ingestObservations()
 		case <-fcTicker.C:
 			s.ingestForecasts()
+		case <-alertTicker.C:
+			s.ingestAlerts()
 		case <-dailyTicker.C:
 			s.runDailyJobsIfNeeded()
 		case <-imageTicker.C:
@@ -229,6 +242,35 @@ func (s *Scheduler) ensureWeatherImage(forecasts []models.Forecast) {
 		}
 		log.Printf("scheduler: cached weather image for %s", condition)
 	}()
+}
+
+func (s *Scheduler) ingestAlerts() {
+	if s.emergencyClient == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	alerts, err := s.emergencyClient.Fetch(ctx)
+	if err != nil {
+		log.Printf("scheduler: fetch alerts: %v", err)
+		return
+	}
+
+	now := time.Now()
+	inserted := 0
+	for _, alert := range alerts {
+		if err := s.store.UpsertAlert(alert, now); err != nil {
+			log.Printf("scheduler: upsert alert %s: %v", alert.ID, err)
+			continue
+		}
+		inserted++
+	}
+
+	if len(alerts) > 0 {
+		log.Printf("scheduler: stored %d emergency alerts", inserted)
+	}
 }
 
 func (s *Scheduler) ingestObservations() {

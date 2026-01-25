@@ -266,6 +266,34 @@ ALTER TABLE daily_summaries ADD COLUMN diurnal_range REAL;
 ALTER TABLE daily_summaries ADD COLUMN midday_gradient REAL;
 `,
 	},
+	{
+		Version:     12,
+		Description: "Add emergency_alerts table for VicEmergency data",
+		SQL: `
+CREATE TABLE IF NOT EXISTS emergency_alerts (
+    id TEXT PRIMARY KEY,
+    category TEXT,
+    subcategory TEXT,
+    name TEXT,
+    status TEXT,
+    location TEXT,
+    distance_km REAL,
+    severity INTEGER,
+    lat REAL,
+    lon REAL,
+    headline TEXT,
+    body TEXT,
+    url TEXT,
+    first_seen_at DATETIME NOT NULL,
+    last_seen_at DATETIME NOT NULL,
+    created_at DATETIME,
+    updated_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_alerts_last_seen ON emergency_alerts(last_seen_at);
+CREATE INDEX IF NOT EXISTS idx_alerts_severity ON emergency_alerts(severity);
+`,
+	},
 }
 
 func (s *Store) Migrate() error {

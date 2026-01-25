@@ -96,6 +96,9 @@ func main() {
 		scheduler.SetImageGenerator(gen, server.ImageCache(), server.ImageGenMutex())
 	}
 
+	// Share emergency client between server and scheduler
+	scheduler.SetEmergencyClient(server.EmergencyClient())
+
 	if *backfill {
 		log.Println("backfilling 7-day observation history")
 		if err := scheduler.BackfillHistory7Day(); err != nil {

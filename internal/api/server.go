@@ -98,6 +98,11 @@ func (s *Server) ImageGenMutex() *sync.Mutex {
 	return &s.genMu
 }
 
+// EmergencyClient returns the VicEmergency client for use by the scheduler.
+func (s *Server) EmergencyClient() *emergency.Client {
+	return s.emergencyClient
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
@@ -506,11 +511,10 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 		}
 	}
 
-	// Fetch emergency alerts for the area
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if alerts, err := s.emergencyClient.Alerts(ctx); err != nil {
-		log.Printf("fetch emergency alerts: %v", err)
+	// Get emergency alerts from database (populated by scheduler)
+	// Alerts older than 30 mins are considered stale
+	if alerts, err := s.store.GetActiveAlerts(30 * time.Minute); err != nil {
+		log.Printf("get active alerts: %v", err)
 	} else {
 		data.Alerts = alerts
 		for _, a := range alerts {
