@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lox/wandiweather/internal/emergency"
 	"github.com/lox/wandiweather/internal/forecast"
 	"github.com/lox/wandiweather/internal/imagegen"
 	"github.com/lox/wandiweather/internal/models"
@@ -28,13 +29,14 @@ import (
 var templateFS embed.FS
 
 type Server struct {
-	store      *store.Store
-	port       string
-	loc        *time.Location
-	tmpl       *template.Template
-	imageCache *imagegen.Cache
-	imageGen   *imagegen.Generator
-	genMu      sync.Mutex // Prevents concurrent generation of same image
+	store           *store.Store
+	port            string
+	loc             *time.Location
+	tmpl            *template.Template
+	imageCache      *imagegen.Cache
+	imageGen        *imagegen.Generator
+	genMu           sync.Mutex // Prevents concurrent generation of same image
+	emergencyClient *emergency.Client
 }
 
 func NewServer(store *store.Store, port string, loc *time.Location) *Server {
@@ -66,13 +68,17 @@ func NewServer(store *store.Store, port string, loc *time.Location) *Server {
 		imageGen = gen
 	}
 
+	// Initialize VicEmergency client for Wandiligong area
+	emergencyClient := emergency.NewClient(-36.794, 146.977, emergency.DefaultRadiusKM)
+
 	return &Server{
-		store:      store,
-		port:       port,
-		loc:        loc,
-		tmpl:       tmpl,
-		imageCache: imagegen.NewCache("data/images"),
-		imageGen:   imageGen,
+		store:           store,
+		port:            port,
+		loc:             loc,
+		tmpl:            tmpl,
+		imageCache:      imagegen.NewCache("data/images"),
+		imageGen:        imageGen,
+		emergencyClient: emergencyClient,
 	}
 }
 
@@ -145,6 +151,8 @@ type CurrentData struct {
 	TodayStats     *TodayStats
 	LastUpdated    time.Time
 	Moon           *MoonData
+	Alerts         []emergency.Alert
+	UrgentAlerts   []emergency.Alert
 }
 
 // MoonData contains moon phase information for display.
@@ -495,6 +503,20 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 			tf.Narrative = buildGeneratedNarrative(day)
 
 			data.TodayForecast = tf
+		}
+	}
+
+	// Fetch emergency alerts for the area
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if alerts, err := s.emergencyClient.Alerts(ctx); err != nil {
+		log.Printf("fetch emergency alerts: %v", err)
+	} else {
+		data.Alerts = alerts
+		for _, a := range alerts {
+			if a.IsUrgent() {
+				data.UrgentAlerts = append(data.UrgentAlerts, a)
+			}
 		}
 	}
 

@@ -3,6 +3,21 @@
     <div class="time">{{.LastUpdated.Format "Mon 3:04 PM"}}</div>
 </header>
 
+{{if .UrgentAlerts}}
+<div class="emergency-alerts">
+    {{range .UrgentAlerts}}
+    <a href="{{.URL}}" target="_blank" rel="noopener" class="alert-banner {{.SeverityClass}}">
+        <span class="alert-icon">{{if eq .Severity 0}}🚨{{else}}⚠️{{end}}</span>
+        <div class="alert-content">
+            <strong>{{.SeverityName}}</strong>
+            <span class="alert-detail">{{.Category}}{{if .SubCategory}}: {{.SubCategory}}{{end}} — {{.Location}} ({{printf "%.0f" .Distance}}km away)</span>
+        </div>
+        <span class="alert-arrow">→</span>
+    </a>
+    {{end}}
+</div>
+{{end}}
+
 <!-- NOW: Current conditions -->
 <div class="hero">
     {{if gt .ValleyTemp 0.0}}
@@ -125,4 +140,5 @@
 
 <div class="updated">
     Updated {{.LastUpdated.Format "3:04:05 PM"}} · <a href="/accuracy">Forecast accuracy</a> · <a href="mailto:lachlan@ljd.cc">Email me</a>
+    {{if .Alerts}}<br><a href="https://emergency.vic.gov.au" target="_blank" rel="noopener">Emergency data: State of Victoria</a>{{end}}
 </div>
