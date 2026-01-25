@@ -13,6 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/lox/wandiweather/internal/api"
+	"github.com/lox/wandiweather/internal/firedanger"
 	"github.com/lox/wandiweather/internal/ingest"
 	"github.com/lox/wandiweather/internal/models"
 	"github.com/lox/wandiweather/internal/store"
@@ -98,6 +99,9 @@ func main() {
 
 	// Share emergency client between server and scheduler
 	scheduler.SetEmergencyClient(server.EmergencyClient())
+
+	// Set up fire danger client for North East district
+	scheduler.SetFireDangerClient(firedanger.NewNorthEastClient())
 
 	if *backfill {
 		log.Println("backfilling 7-day observation history")

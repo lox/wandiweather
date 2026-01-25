@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lox/wandiweather/internal/emergency"
+	"github.com/lox/wandiweather/internal/firedanger"
 	"github.com/lox/wandiweather/internal/forecast"
 	"github.com/lox/wandiweather/internal/imagegen"
 	"github.com/lox/wandiweather/internal/models"
@@ -14,19 +15,20 @@ import (
 )
 
 type Scheduler struct {
-	store           *store.Store
-	pws             *PWS
-	forecast        *ForecastClient
-	bom             *BOMClient
-	daily           *DailyJobs
-	stationIDs      []string
-	loc             *time.Location
-	obsInterval     time.Duration
-	fcInterval      time.Duration
-	imageGen        *imagegen.Generator
-	imageCache      *imagegen.Cache
-	imageGenMu      *sync.Mutex // Shared with server to prevent duplicate API calls
-	emergencyClient *emergency.Client
+	store            *store.Store
+	pws              *PWS
+	forecast         *ForecastClient
+	bom              *BOMClient
+	daily            *DailyJobs
+	stationIDs       []string
+	loc              *time.Location
+	obsInterval      time.Duration
+	fcInterval       time.Duration
+	imageGen         *imagegen.Generator
+	imageCache       *imagegen.Cache
+	imageGenMu       *sync.Mutex // Shared with server to prevent duplicate API calls
+	emergencyClient  *emergency.Client
+	fireDangerClient *firedanger.Client
 }
 
 func NewScheduler(store *store.Store, pws *PWS, forecast *ForecastClient, stationIDs []string, loc *time.Location) *Scheduler {
@@ -49,6 +51,11 @@ func (s *Scheduler) SetEmergencyClient(client *emergency.Client) {
 	s.emergencyClient = client
 }
 
+// SetFireDangerClient configures the scheduler to poll for fire danger ratings.
+func (s *Scheduler) SetFireDangerClient(client *firedanger.Client) {
+	s.fireDangerClient = client
+}
+
 // SetImageGenerator configures the scheduler to pre-generate weather images after forecast ingestion.
 // The mutex should be shared with the HTTP server to coordinate generation and prevent duplicate API calls.
 func (s *Scheduler) SetImageGenerator(gen *imagegen.Generator, cache *imagegen.Cache, mu *sync.Mutex) {
@@ -61,17 +68,20 @@ func (s *Scheduler) Run(ctx context.Context) {
 	s.ingestObservations()
 	s.ingestForecasts()
 	s.ingestAlerts()
+	s.ingestFireDanger()
 	s.runDailyJobsIfNeeded()
 	s.checkWeatherImage()
 
 	obsTicker := time.NewTicker(s.obsInterval)
 	fcTicker := time.NewTicker(s.fcInterval)
-	alertTicker := time.NewTicker(5 * time.Minute) // Poll alerts every 5 mins
+	alertTicker := time.NewTicker(5 * time.Minute)  // Poll alerts every 5 mins
+	fdrTicker := time.NewTicker(30 * time.Minute)   // Poll fire danger every 30 mins (updates twice daily)
 	dailyTicker := time.NewTicker(1 * time.Hour)
-	imageTicker := time.NewTicker(1 * time.Hour) // Check hourly for time-of-day transitions
+	imageTicker := time.NewTicker(1 * time.Hour)    // Check hourly for time-of-day transitions
 	defer obsTicker.Stop()
 	defer fcTicker.Stop()
 	defer alertTicker.Stop()
+	defer fdrTicker.Stop()
 	defer dailyTicker.Stop()
 	defer imageTicker.Stop()
 
@@ -86,6 +96,8 @@ func (s *Scheduler) Run(ctx context.Context) {
 			s.ingestForecasts()
 		case <-alertTicker.C:
 			s.ingestAlerts()
+		case <-fdrTicker.C:
+			s.ingestFireDanger()
 		case <-dailyTicker.C:
 			s.runDailyJobsIfNeeded()
 		case <-imageTicker.C:
@@ -242,6 +254,38 @@ func (s *Scheduler) ensureWeatherImage(forecasts []models.Forecast) {
 		}
 		log.Printf("scheduler: cached weather image for %s", condition)
 	}()
+}
+
+func (s *Scheduler) ingestFireDanger() {
+	if s.fireDangerClient == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	forecasts, err := s.fireDangerClient.Fetch(ctx)
+	if err != nil {
+		log.Printf("scheduler: fetch fire danger: %v", err)
+		return
+	}
+
+	now := time.Now()
+	for _, f := range forecasts {
+		if err := s.store.UpsertFireDanger(f, now); err != nil {
+			log.Printf("scheduler: upsert fire danger %s: %v", f.Date.Format("2006-01-02"), err)
+		}
+	}
+
+	if len(forecasts) > 0 {
+		// Log today's rating
+		today := forecasts[0]
+		tfb := ""
+		if today.TotalFireBan {
+			tfb = " [TOTAL FIRE BAN]"
+		}
+		log.Printf("scheduler: fire danger %s: %s%s", today.Date.Format("Mon"), today.Rating, tfb)
+	}
 }
 
 func (s *Scheduler) ingestAlerts() {

@@ -294,6 +294,22 @@ CREATE INDEX IF NOT EXISTS idx_alerts_last_seen ON emergency_alerts(last_seen_at
 CREATE INDEX IF NOT EXISTS idx_alerts_severity ON emergency_alerts(severity);
 `,
 	},
+	{
+		Version:     13,
+		Description: "Add fire_danger_ratings table for CFA fire danger data",
+		SQL: `
+CREATE TABLE IF NOT EXISTS fire_danger_ratings (
+    date DATE NOT NULL,
+    district TEXT NOT NULL,
+    rating TEXT NOT NULL,
+    total_fire_ban BOOLEAN NOT NULL DEFAULT FALSE,
+    fetched_at DATETIME NOT NULL,
+    PRIMARY KEY (date, district)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fdr_date ON fire_danger_ratings(date);
+`,
+	},
 }
 
 func (s *Store) Migrate() error {

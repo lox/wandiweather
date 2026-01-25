@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/lox/wandiweather/internal/emergency"
+	"github.com/lox/wandiweather/internal/firedanger"
 	"github.com/lox/wandiweather/internal/forecast"
 	"github.com/lox/wandiweather/internal/imagegen"
 	"github.com/lox/wandiweather/internal/models"
@@ -158,6 +159,7 @@ type CurrentData struct {
 	Moon           *MoonData
 	Alerts         []emergency.Alert
 	UrgentAlerts   []emergency.Alert
+	FireDanger     *firedanger.DayForecast
 }
 
 // MoonData contains moon phase information for display.
@@ -522,6 +524,11 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 				data.UrgentAlerts = append(data.UrgentAlerts, a)
 			}
 		}
+	}
+
+	// Get today's fire danger rating
+	if fdr, err := s.store.GetTodayFireDanger(s.loc); err == nil {
+		data.FireDanger = fdr
 	}
 
 	return data, nil

@@ -1,5 +1,11 @@
 <header>
-    <div class="location">Wandiligong</div>
+    <div class="location">Wandiligong
+        {{if .FireDanger}}
+        <span class="fire-danger {{.FireDanger.Rating.CSSClass}}">
+            <span class="fdr-icon">🔥</span>{{.FireDanger.Rating}}{{if .FireDanger.TotalFireBan}}<span class="tfb-badge">TFB</span>{{end}}
+        </span>
+        {{end}}
+    </div>
     <div class="time">{{.LastUpdated.Format "Mon 3:04 PM"}}</div>
 </header>
 
