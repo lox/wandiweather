@@ -339,6 +339,8 @@ func (s *Scheduler) ingestObservations() {
 func (s *Scheduler) IngestOnce() error {
 	s.ingestObservations()
 	s.ingestForecasts()
+	s.ingestAlerts()
+	s.ingestFireDanger()
 	return nil
 }
 
