@@ -506,6 +506,33 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 				exp.MaxFinal = tf.TempMax
 			}
 
+			// Use observed max as floor if it exceeds the corrected forecast
+			// This prevents showing a lower forecast than what's already been recorded
+			if data.TodayStats != nil && data.TodayStats.MaxTemp > tf.TempMax {
+				tf.TempMax = math.Round(data.TodayStats.MaxTemp)
+				exp.MaxFinal = tf.TempMax
+			}
+
+			// Sanity check: if the corrected forecast exceeds both the raw forecast
+			// AND the observed max by more than 3°C, the correction is likely wrong.
+			// In this case, prefer the higher of raw forecast or observed max.
+			if data.TodayStats != nil {
+				rawMax := exp.MaxRaw
+				observedMax := data.TodayStats.MaxTemp
+				correctedMax := tf.TempMax
+				// If correction pushed temp more than 3° above both raw and observed
+				if correctedMax > rawMax+3 && correctedMax > observedMax+3 {
+					// Use the higher of raw forecast or observed max
+					if observedMax > rawMax {
+						tf.TempMax = math.Round(observedMax)
+					} else {
+						tf.TempMax = math.Round(rawMax)
+					}
+					exp.MaxFinal = tf.TempMax
+					exp.MaxBiasApplied = 0 // Mark that correction was rejected
+				}
+			}
+
 			// MIN TEMP: prefer WU (better accuracy)
 			if wuForecast != nil && wuForecast.TempMin.Valid {
 				exp.MinSource = "wu"

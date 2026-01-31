@@ -343,6 +343,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_displayed_forecasts_unique
 ON displayed_forecasts(valid_date, day_of_forecast, wu_forecast_id, bom_forecast_id);
 `,
 	},
+	{
+		Version:     15,
+		Description: "Fix BOM forecast dates (were off by 1 day due to UTC/local timezone bug)",
+		SQL: `
+-- BOM forecasts with day_of_forecast >= 1 had incorrect valid_date
+-- (used UTC date from start time instead of local Melbourne date)
+-- Delete affected records and let them be re-fetched with correct dates
+DELETE FROM forecasts WHERE source = 'bom' AND day_of_forecast >= 1;
+
+-- Clear verification data computed from incorrect dates
+DELETE FROM forecast_verification;
+
+-- Clear bias stats computed from incorrect verification
+DELETE FROM forecast_correction_stats;
+`,
+	},
 }
 
 func (s *Store) Migrate() error {

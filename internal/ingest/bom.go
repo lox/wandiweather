@@ -110,12 +110,18 @@ func (b *BOMClient) FetchForecasts() ([]models.Forecast, string, error) {
 	fetchedAt := time.Now().UTC()
 	var forecasts []models.Forecast
 
+	// BOM uses Australian Eastern time for forecast periods
+	mel, _ := time.LoadLocation("Australia/Melbourne")
+
 	for _, period := range targetArea.Periods {
 		startTime, err := time.Parse(time.RFC3339, period.StartTime)
 		if err != nil {
 			continue
 		}
-		validDate := time.Date(startTime.Year(), startTime.Month(), startTime.Day(), 0, 0, 0, 0, time.UTC)
+		// Convert to local time first, then extract the date
+		// BOM period start times are at midnight local time for the forecast day
+		localStart := startTime.In(mel)
+		validDate := time.Date(localStart.Year(), localStart.Month(), localStart.Day(), 0, 0, 0, 0, time.UTC)
 
 		fc := models.Forecast{
 			Source:        "bom",
