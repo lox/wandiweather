@@ -2,6 +2,8 @@ package ingest
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -120,8 +122,36 @@ func (s *Scheduler) ingestForecasts() {
 	if s.forecast == nil {
 		return
 	}
+
+	geocode := fmt.Sprintf("%.4f,%.4f", s.forecast.lat, s.forecast.lon)
+
 	log.Println("scheduler: ingesting WU forecasts")
-	forecasts, _, err := s.forecast.Fetch7Day()
+	run, _ := s.store.StartIngestRun("wu", "forecast/daily/5day", nil, &geocode)
+	forecasts, rawBody, fetchResult, err := s.forecast.Fetch5Day()
+
+	if run != nil {
+		run.Success = err == nil
+		if fetchResult != nil {
+			run.HTTPStatus = sql.NullInt64{Int64: int64(fetchResult.HTTPStatus), Valid: fetchResult.HTTPStatus > 0}
+			run.ResponseSizeBytes = sql.NullInt64{Int64: int64(fetchResult.ResponseSize), Valid: fetchResult.ResponseSize > 0}
+			run.RecordsParsed = sql.NullInt64{Int64: int64(fetchResult.RecordCount), Valid: true}
+			if fetchResult.ParseErrors > 0 {
+				run.ParseErrors = sql.NullInt64{Int64: int64(fetchResult.ParseErrors), Valid: true}
+				run.ErrorMessage = sql.NullString{String: fetchResult.ParseError, Valid: true}
+				log.Printf("scheduler: WU forecast parse errors: %s", fetchResult.ParseError)
+			}
+		}
+		if err != nil {
+			run.ErrorMessage = sql.NullString{String: err.Error(), Valid: true}
+		}
+	}
+
+	if len(rawBody) > 0 && run != nil {
+		if _, err := s.store.StoreRawPayload(&run.ID, "wu", "forecast/daily/5day", nil, &geocode, []byte(rawBody)); err != nil {
+			log.Printf("scheduler: store WU raw payload: %v", err)
+		}
+	}
+
 	if err != nil {
 		log.Printf("scheduler: fetch WU forecast: %v", err)
 	} else {
@@ -134,11 +164,43 @@ func (s *Scheduler) ingestForecasts() {
 			inserted++
 		}
 		log.Printf("scheduler: inserted %d WU forecast days", inserted)
+		if run != nil {
+			run.RecordsStored = sql.NullInt64{Int64: int64(inserted), Valid: true}
+		}
+	}
+
+	if run != nil {
+		s.store.CompleteIngestRun(run)
 	}
 
 	if s.bom != nil {
 		log.Println("scheduler: ingesting BOM forecasts")
-		bomForecasts, _, err := s.bom.FetchForecasts()
+		bomRun, _ := s.store.StartIngestRun("bom", "forecast/fwo", nil, &s.bom.areaCode)
+		bomForecasts, bomRawBody, bomFetchResult, err := s.bom.FetchForecasts()
+
+		if bomRun != nil {
+			bomRun.Success = err == nil
+			if bomFetchResult != nil {
+				bomRun.HTTPStatus = sql.NullInt64{Int64: int64(bomFetchResult.HTTPStatus), Valid: bomFetchResult.HTTPStatus > 0}
+				bomRun.ResponseSizeBytes = sql.NullInt64{Int64: int64(bomFetchResult.ResponseSize), Valid: bomFetchResult.ResponseSize > 0}
+				bomRun.RecordsParsed = sql.NullInt64{Int64: int64(bomFetchResult.RecordCount), Valid: true}
+				if bomFetchResult.ParseErrors > 0 {
+					bomRun.ParseErrors = sql.NullInt64{Int64: int64(bomFetchResult.ParseErrors), Valid: true}
+					bomRun.ErrorMessage = sql.NullString{String: bomFetchResult.ParseError, Valid: true}
+					log.Printf("scheduler: BOM forecast parse errors: %s", bomFetchResult.ParseError)
+				}
+			}
+			if err != nil {
+				bomRun.ErrorMessage = sql.NullString{String: err.Error(), Valid: true}
+			}
+		}
+
+		if len(bomRawBody) > 0 && bomRun != nil {
+			if _, err := s.store.StoreRawPayload(&bomRun.ID, "bom", "forecast/fwo", nil, &s.bom.areaCode, []byte(bomRawBody)); err != nil {
+				log.Printf("scheduler: store BOM raw payload: %v", err)
+			}
+		}
+
 		if err != nil {
 			log.Printf("scheduler: fetch BOM forecast: %v", err)
 		} else {
@@ -151,10 +213,16 @@ func (s *Scheduler) ingestForecasts() {
 				inserted++
 			}
 			log.Printf("scheduler: inserted %d BOM forecast days", inserted)
+			if bomRun != nil {
+				bomRun.RecordsStored = sql.NullInt64{Int64: int64(inserted), Valid: true}
+			}
+		}
+
+		if bomRun != nil {
+			s.store.CompleteIngestRun(bomRun)
 		}
 	}
 
-	// Pre-generate weather image for current condition
 	s.ensureWeatherImage(forecasts)
 }
 
@@ -320,16 +388,52 @@ func (s *Scheduler) ingestAlerts() {
 func (s *Scheduler) ingestObservations() {
 	log.Println("scheduler: ingesting observations")
 	for _, stationID := range s.stationIDs {
-		obs, rawJSON, err := s.pws.FetchCurrent(stationID)
+		run, _ := s.store.StartIngestRun("wu", "pws/observations/current", &stationID, nil)
+
+		obs, rawJSON, fetchResult, err := s.pws.FetchCurrent(stationID)
+
+		if run != nil {
+			run.Success = err == nil
+			if fetchResult != nil {
+				run.HTTPStatus = sql.NullInt64{Int64: int64(fetchResult.HTTPStatus), Valid: fetchResult.HTTPStatus > 0}
+				run.ResponseSizeBytes = sql.NullInt64{Int64: int64(fetchResult.ResponseSize), Valid: fetchResult.ResponseSize > 0}
+				run.RecordsParsed = sql.NullInt64{Int64: int64(fetchResult.RecordCount), Valid: true}
+			}
+			if err != nil {
+				run.ErrorMessage = sql.NullString{String: err.Error(), Valid: true}
+			}
+		}
+
+		if len(rawJSON) > 0 && run != nil {
+			if _, err := s.store.StoreRawPayload(&run.ID, "wu", "pws/observations/current", &stationID, nil, []byte(rawJSON)); err != nil {
+				log.Printf("scheduler: store PWS raw payload %s: %v", stationID, err)
+			}
+		}
+
 		if err != nil {
 			log.Printf("scheduler: fetch %s: %v", stationID, err)
+			if run != nil {
+				s.store.CompleteIngestRun(run)
+			}
 			continue
 		}
+
 		obs.RawJSON = rawJSON
 		if err := s.store.InsertObservation(*obs); err != nil {
 			log.Printf("scheduler: insert %s: %v", stationID, err)
+			if run != nil {
+				run.Success = false
+				run.ErrorMessage = sql.NullString{String: fmt.Sprintf("insert: %v", err), Valid: true}
+				s.store.CompleteIngestRun(run)
+			}
 			continue
 		}
+
+		if run != nil {
+			run.RecordsStored = sql.NullInt64{Int64: 1, Valid: true}
+			s.store.CompleteIngestRun(run)
+		}
+
 		if obs.Temp.Valid {
 			log.Printf("scheduler: %s: %.1f°C", stationID, obs.Temp.Float64)
 		}

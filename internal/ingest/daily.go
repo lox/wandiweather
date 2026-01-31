@@ -19,6 +19,8 @@ func NewDailyJobs(store *store.Store) *DailyJobs {
 	return &DailyJobs{store: store}
 }
 
+const rawPayloadRetentionDays = 90
+
 func (d *DailyJobs) RunAll(forDate time.Time) error {
 	log.Printf("daily: running jobs for %s", forDate.Format("2006-01-02"))
 
@@ -40,10 +42,50 @@ func (d *DailyJobs) RunAll(forDate time.Time) error {
 		errs = append(errs, fmt.Errorf("correction stats: %w", err))
 	}
 
+	if deleted, err := d.store.CleanupOldRawPayloads(rawPayloadRetentionDays); err != nil {
+		log.Printf("daily: cleanup raw payloads error: %v", err)
+	} else if deleted > 0 {
+		log.Printf("daily: cleaned up %d old raw payloads (>%d days)", deleted, rawPayloadRetentionDays)
+	}
+
+	d.LogIngestHealth()
+
 	if len(errs) > 0 {
 		return fmt.Errorf("daily jobs had %d errors", len(errs))
 	}
 	return nil
+}
+
+// LogIngestHealth logs a summary of ingest health for the last 24 hours.
+func (d *DailyJobs) LogIngestHealth() {
+	health, err := d.store.GetIngestHealth(1)
+	if err != nil {
+		log.Printf("daily: failed to get ingest health: %v", err)
+		return
+	}
+
+	if len(health) == 0 {
+		log.Println("daily: no ingest runs in the last 24 hours")
+		return
+	}
+
+	var totalRuns, successRuns, failedRuns int
+	var totalRecords, totalParseErrors int64
+	for _, h := range health {
+		totalRuns += h.TotalRuns
+		successRuns += h.SuccessRuns
+		failedRuns += h.FailedRuns
+		totalRecords += h.TotalRecords
+		totalParseErrors += h.TotalParseErrors
+	}
+
+	if failedRuns > 0 || totalParseErrors > 0 {
+		log.Printf("daily: ingest health (24h): %d runs (%d ok, %d failed), %d records, %d parse errors",
+			totalRuns, successRuns, failedRuns, totalRecords, totalParseErrors)
+	} else {
+		log.Printf("daily: ingest health (24h): %d runs (%d ok), %d records",
+			totalRuns, successRuns, totalRecords)
+	}
 }
 
 func (d *DailyJobs) ComputeDailySummaries(forDate time.Time) error {

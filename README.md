@@ -7,8 +7,10 @@ Hyperlocal weather service for Wandiligong/Bright, Victoria. Aggregates data fro
 ## Features
 
 - Real-time conditions from 4 local stations
-- 5-day forecast from Weather Underground
+- 5-day forecast from Weather Underground + BOM
 - Forecast accuracy tracking and verification
+- Bias correction with regime-aware adjustments
+- ML-ready data collection (audit trail, raw payload storage)
 - Simple HTMX-powered dashboard
 
 ## Quick Start
@@ -59,10 +61,12 @@ Uses [Task](https://taskfile.dev) (installed via Hermit):
 cmd/wandiweather/     # Entry point
 internal/
   api/                # HTTP handlers + templates
-  ingest/             # PWS and forecast ingestion
+  ingest/             # PWS and forecast ingestion + scheduling
+  forecast/           # Bias correction, regimes, nowcast
   models/             # Data structures
   store/              # SQLite storage + migrations
 data/                 # SQLite database
+docs/plans/           # Implementation plans
 ```
 
 ## Deployment

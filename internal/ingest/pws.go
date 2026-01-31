@@ -63,17 +63,30 @@ type CurrentObservation struct {
 	} `json:"metric"`
 }
 
-func (p *PWS) FetchCurrent(stationID string) (*models.Observation, string, error) {
+// FetchResult contains the result of a fetch operation with metadata for auditing.
+type FetchResult struct {
+	HTTPStatus   int
+	ResponseSize int
+	RecordCount  int
+	ParseErrors  int    // Number of records that failed to parse
+	Error        error  // Fatal error (if any)
+	ParseError   string // Description of parse errors (if any)
+}
+
+func (p *PWS) FetchCurrent(stationID string) (*models.Observation, string, *FetchResult, error) {
 	url := fmt.Sprintf("https://api.weather.com/v2/pws/observations/current?stationId=%s&format=json&units=m&apiKey=%s", stationID, p.apiKey)
 	start := time.Now()
+	result := &FetchResult{}
 
 	var body []byte
+	var lastStatus int
 	operation := func() error {
 		resp, err := p.client.Get(url)
 		if err != nil {
 			return fmt.Errorf("fetch current: %w", err)
 		}
 		defer resp.Body.Close()
+		lastStatus = resp.StatusCode
 
 		if resp.StatusCode == http.StatusTooManyRequests {
 			metrics.PWSAPICallsTotal.WithLabelValues(stationID, "current", "rate_limited").Inc()
@@ -105,77 +118,88 @@ func (p *PWS) FetchCurrent(stationID string) (*models.Observation, string, error
 	bo := backoff.NewExponentialBackOff()
 	bo.MaxElapsedTime = 2 * time.Minute
 	if err := backoff.Retry(operation, bo); err != nil {
-		return nil, "", err
+		result.HTTPStatus = lastStatus
+		result.Error = err
+		return nil, "", result, err
 	}
+
+	result.HTTPStatus = lastStatus
+	result.ResponseSize = len(body)
 
 	metrics.PWSAPICallsTotal.WithLabelValues(stationID, "current", "success").Inc()
 	metrics.PWSAPILatency.WithLabelValues(stationID, "current").Observe(time.Since(start).Seconds())
 
 	var data CurrentResponse
 	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, "", fmt.Errorf("unmarshal: %w", err)
+		result.Error = fmt.Errorf("unmarshal: %w", err)
+		return nil, string(body), result, result.Error
 	}
 
 	if len(data.Observations) == 0 {
-		return nil, "", fmt.Errorf("no observations returned for %s", stationID)
+		result.Error = fmt.Errorf("no observations returned for %s", stationID)
+		return nil, string(body), result, result.Error
 	}
+
+	result.RecordCount = len(data.Observations)
 
 	obs := data.Observations[0]
 	observedAt, err := time.Parse(time.RFC3339, obs.ObsTimeUtc)
 	if err != nil {
-		return nil, "", fmt.Errorf("parse time: %w", err)
+		result.Error = fmt.Errorf("parse time: %w", err)
+		return nil, string(body), result, result.Error
 	}
 
-	result := &models.Observation{
+	observation := &models.Observation{
 		StationID:  obs.StationID,
 		ObservedAt: observedAt,
 		QCStatus:   obs.QCStatus,
+		ObsType:    models.ObsTypeInstant,
 	}
 
 	if obs.Humidity != nil {
-		result.Humidity = sql.NullInt64{Int64: int64(*obs.Humidity), Valid: true}
+		observation.Humidity = sql.NullInt64{Int64: int64(*obs.Humidity), Valid: true}
 	}
 	if obs.UV != nil {
-		result.UV = sql.NullFloat64{Float64: *obs.UV, Valid: true}
+		observation.UV = sql.NullFloat64{Float64: *obs.UV, Valid: true}
 	}
 	if obs.WindDir != nil {
-		result.WindDir = sql.NullInt64{Int64: int64(*obs.WindDir), Valid: true}
+		observation.WindDir = sql.NullInt64{Int64: int64(*obs.WindDir), Valid: true}
 	}
 	if obs.SolarRadiation != nil {
-		result.SolarRadiation = sql.NullFloat64{Float64: *obs.SolarRadiation, Valid: true}
+		observation.SolarRadiation = sql.NullFloat64{Float64: *obs.SolarRadiation, Valid: true}
 	}
 
 	if obs.Metric != nil {
 		if obs.Metric.Temp != nil {
-			result.Temp = sql.NullFloat64{Float64: *obs.Metric.Temp, Valid: true}
+			observation.Temp = sql.NullFloat64{Float64: *obs.Metric.Temp, Valid: true}
 		}
 		if obs.Metric.Dewpt != nil {
-			result.Dewpoint = sql.NullFloat64{Float64: *obs.Metric.Dewpt, Valid: true}
+			observation.Dewpoint = sql.NullFloat64{Float64: *obs.Metric.Dewpt, Valid: true}
 		}
 		if obs.Metric.Pressure != nil {
-			result.Pressure = sql.NullFloat64{Float64: *obs.Metric.Pressure, Valid: true}
+			observation.Pressure = sql.NullFloat64{Float64: *obs.Metric.Pressure, Valid: true}
 		}
 		if obs.Metric.WindSpeed != nil {
-			result.WindSpeed = sql.NullFloat64{Float64: *obs.Metric.WindSpeed, Valid: true}
+			observation.WindSpeed = sql.NullFloat64{Float64: *obs.Metric.WindSpeed, Valid: true}
 		}
 		if obs.Metric.WindGust != nil {
-			result.WindGust = sql.NullFloat64{Float64: *obs.Metric.WindGust, Valid: true}
+			observation.WindGust = sql.NullFloat64{Float64: *obs.Metric.WindGust, Valid: true}
 		}
 		if obs.Metric.PrecipRate != nil {
-			result.PrecipRate = sql.NullFloat64{Float64: *obs.Metric.PrecipRate, Valid: true}
+			observation.PrecipRate = sql.NullFloat64{Float64: *obs.Metric.PrecipRate, Valid: true}
 		}
 		if obs.Metric.PrecipTotal != nil {
-			result.PrecipTotal = sql.NullFloat64{Float64: *obs.Metric.PrecipTotal, Valid: true}
+			observation.PrecipTotal = sql.NullFloat64{Float64: *obs.Metric.PrecipTotal, Valid: true}
 		}
 		if obs.Metric.HeatIndex != nil {
-			result.HeatIndex = sql.NullFloat64{Float64: *obs.Metric.HeatIndex, Valid: true}
+			observation.HeatIndex = sql.NullFloat64{Float64: *obs.Metric.HeatIndex, Valid: true}
 		}
 		if obs.Metric.WindChill != nil {
-			result.WindChill = sql.NullFloat64{Float64: *obs.Metric.WindChill, Valid: true}
+			observation.WindChill = sql.NullFloat64{Float64: *obs.Metric.WindChill, Valid: true}
 		}
 	}
 
-	return result, string(body), nil
+	return observation, string(body), result, nil
 }
 
 type HistoryResponse struct {
@@ -289,9 +313,11 @@ func (p *PWS) fetchHistory(stationID, endpoint string) ([]models.Observation, er
 		observedAt := time.Unix(obs.Epoch, 0).UTC()
 
 		result := models.Observation{
-			StationID:  obs.StationID,
-			ObservedAt: observedAt,
-			QCStatus:   obs.QCStatus,
+			StationID:         obs.StationID,
+			ObservedAt:        observedAt,
+			QCStatus:          obs.QCStatus,
+			ObsType:           models.ObsTypeHourlyAggregate,
+			AggregationPeriod: sql.NullInt64{Int64: 60, Valid: true},
 		}
 
 		if obs.HumidityAvg != nil {

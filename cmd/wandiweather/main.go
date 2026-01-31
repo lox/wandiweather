@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"database/sql"
-	"flag"
 	"log"
-	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/alecthomas/kong"
+	"github.com/joho/godotenv"
 	_ "modernc.org/sqlite"
 
 	"github.com/lox/wandiweather/internal/api"
@@ -18,6 +18,17 @@ import (
 	"github.com/lox/wandiweather/internal/models"
 	"github.com/lox/wandiweather/internal/store"
 )
+
+var cli struct {
+	DB           string `name:"db" default:"data/wandiweather.db" help:"Path to SQLite database."`
+	Port         string `name:"port" default:"8080" env:"PORT" help:"HTTP server port."`
+	NoPoll       bool   `name:"no-poll" help:"Disable polling (server only, for local dev)."`
+	Once         bool   `name:"once" help:"Ingest once and exit (for testing)."`
+	Backfill     bool   `name:"backfill" help:"Backfill 7-day observation history."`
+	Daily        bool   `name:"daily" help:"Run daily jobs (summaries + verification) and exit."`
+	BackfillDaily bool  `name:"backfill-daily" help:"Backfill all daily summaries and verification."`
+	PWSApiKey    string `name:"pws-api-key" env:"PWS_API_KEY" required:"" help:"Weather Underground API key."`
+}
 
 var defaultStations = []models.Station{
 	{StationID: "IWANDI23", Name: "Wandiligong (Primary)", Latitude: -36.794, Longitude: 146.977, Elevation: 386, ElevationTier: "valley_floor", IsPrimary: true, Active: true},
@@ -39,22 +50,17 @@ const (
 	wandiligongLon = 146.977
 )
 
+func init() {
+	_ = godotenv.Load() // Load .env if present, ignore error if missing
+}
+
 func main() {
-	dbPath := flag.String("db", "data/wandiweather.db", "path to SQLite database")
-	port := flag.String("port", "8080", "HTTP server port")
-	noPoll := flag.Bool("no-poll", false, "disable polling (server only, for local dev)")
-	once := flag.Bool("once", false, "ingest once and exit (for testing)")
-	backfill := flag.Bool("backfill", false, "backfill 7-day observation history")
-	dailyJobs := flag.Bool("daily", false, "run daily jobs (summaries + verification) and exit")
-	backfillDaily := flag.Bool("backfill-daily", false, "backfill all daily summaries and verification")
-	flag.Parse()
+	kong.Parse(&cli,
+		kong.Name("wandiweather"),
+		kong.Description("Weather station data ingestion and display server."),
+	)
 
-	apiKey := os.Getenv("PWS_API_KEY")
-	if apiKey == "" {
-		log.Fatal("PWS_API_KEY environment variable required")
-	}
-
-	db, err := sql.Open("sqlite", *dbPath)
+	db, err := sql.Open("sqlite", cli.DB)
 	if err != nil {
 		log.Fatalf("open database: %v", err)
 	}
@@ -87,10 +93,10 @@ func main() {
 	}
 	log.Println("stations seeded")
 
-	pws := ingest.NewPWS(apiKey)
-	forecast := ingest.NewForecastClient(apiKey, wandiligongLat, wandiligongLon)
+	pws := ingest.NewPWS(cli.PWSApiKey)
+	forecast := ingest.NewForecastClient(cli.PWSApiKey, wandiligongLat, wandiligongLon)
 	scheduler := ingest.NewScheduler(st, pws, forecast, stationIDs, loc)
-	server := api.NewServer(st, *port, loc)
+	server := api.NewServer(st, cli.Port, loc)
 
 	// Configure image generation for weather banners, sharing mutex with server
 	if gen := server.ImageGenerator(); gen != nil {
@@ -103,14 +109,14 @@ func main() {
 	// Set up fire danger client for North East district
 	scheduler.SetFireDangerClient(firedanger.NewNorthEastClient())
 
-	if *backfill {
+	if cli.Backfill {
 		log.Println("backfilling 7-day observation history")
 		if err := scheduler.BackfillHistory7Day(); err != nil {
 			log.Fatalf("backfill: %v", err)
 		}
 	}
 
-	if *backfillDaily {
+	if cli.BackfillDaily {
 		log.Println("backfilling daily summaries and verification")
 		if err := scheduler.BackfillDailySummaries(); err != nil {
 			log.Fatalf("backfill summaries: %v", err)
@@ -122,7 +128,7 @@ func main() {
 		return
 	}
 
-	if *dailyJobs {
+	if cli.Daily {
 		log.Println("running daily jobs")
 		if err := scheduler.RunDailyJobs(); err != nil {
 			log.Fatalf("daily jobs: %v", err)
@@ -131,7 +137,7 @@ func main() {
 		return
 	}
 
-	if *once {
+	if cli.Once {
 		log.Println("running single ingestion")
 		if err := scheduler.IngestOnce(); err != nil {
 			log.Fatalf("ingest: %v", err)
@@ -143,13 +149,13 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	if !*noPoll {
+	if !cli.NoPoll {
 		go scheduler.Run(ctx)
 	} else {
 		log.Println("polling disabled (--no-poll)")
 	}
 
-	log.Printf("starting server on :%s", *port)
+	log.Printf("starting server on :%s", cli.Port)
 	if err := server.Run(ctx); err != nil {
 		log.Fatalf("server: %v", err)
 	}

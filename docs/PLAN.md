@@ -1,6 +1,6 @@
 # WandiWeather Implementation Plan
 
-> **Last updated**: January 3, 2026
+> **Last updated**: February 1, 2026
 
 ## Vision
 
@@ -39,10 +39,19 @@ A hyperlocal weather service for Wandiligong/Bright that provides:
 - Level 0 bias correction implemented and active
 - Three-level correction strategy planned (see Phase 3 details)
 
-### 📋 Phase 4: Enhanced Features (TODO)
+### ✅ Phase 4: ML-Ready Data Collection (COMPLETE)
+- Ingest audit trail (`ingest_runs` table) for all API fetches
+- Raw payload storage (`raw_payloads` table) with 90-day retention
+- Observation type tracking (`obs_type`: instant vs hourly_aggregate)
+- Parse error tracking (separate from fatal errors)
+- Daily health check logging
+- See `docs/plans/ml-data-collection.md` for details
+
+### 📋 Phase 5: Enhanced Features (TODO)
 - Dashboard improvements (show corrected forecasts, verification stats)
 - Frost/heat alerts
 - Historical comparisons
+- ML-based forecast correction (when sufficient training data)
 
 ---
 

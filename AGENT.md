@@ -34,19 +34,49 @@ fly ssh console -C "/app/wandiweather --db /data/wandiweather.db --daily"
 - `cmd/wandiweather/main.go` - Entry point, station config, CLI flags
 - `internal/api/server.go` - HTTP handlers
 - `internal/api/templates/` - HTML templates (HTMX)
-- `internal/ingest/` - Weather data ingestion (PWS, forecasts)
-- `internal/ingest/daily.go` - Daily jobs (summaries, verification, regimes)
+- `internal/ingest/` - Weather data ingestion (PWS, forecasts, BOM)
+- `internal/ingest/pws.go` - PWS current observations and history
+- `internal/ingest/forecast.go` - WU forecast fetching (`Fetch5Day`)
+- `internal/ingest/bom.go` - BOM forecast fetching via FTP
+- `internal/ingest/daily.go` - Daily jobs (summaries, verification, cleanup)
+- `internal/ingest/scheduler.go` - Polling scheduler with audit logging
 - `internal/forecast/` - Forecast correction (bias, regimes, nowcast)
 - `internal/store/` - SQLite storage and migrations
+- `internal/store/ingest.go` - Ingest audit trail (`ingest_runs` table)
+- `internal/store/raw_payloads.go` - Raw API response storage
 - `internal/models/` - Data structures
 - `docs/plans/` - Implementation plans
+
+## Key Tables
+
+| Table | Purpose |
+|-------|---------|
+| `observations` | PWS readings with `obs_type` (instant/hourly_aggregate/unknown) |
+| `forecasts` | WU and BOM forecasts with `source` column |
+| `daily_summaries` | Computed daily stats with regime flags |
+| `forecast_verification` | Bias tracking per forecast |
+| `ingest_runs` | Audit trail for all API fetches |
+| `raw_payloads` | Compressed raw API responses (90-day retention) |
 
 ## Conventions
 
 - Use stdlib where possible (net/http, html/template, database/sql)
 - Templates use HTMX for interactivity
-- Migrations are numbered in `internal/store/migrations.go`
+- Migrations are numbered in `internal/store/migrations.go` (currently v19)
 - Stations defined in `cmd/wandiweather/main.go`
+- All ingest operations log to `ingest_runs` for auditing
+- Raw API payloads stored compressed for ML training/debugging
+
+## Data Collection (ML-Ready)
+
+The system is designed for future ML-based forecast correction:
+
+1. **Audit Trail**: Every API fetch logged with HTTP status, response size, record counts
+2. **Raw Payloads**: Compressed JSON/XML stored for re-parsing if needed
+3. **Observation Types**: `obs_type` column distinguishes instant vs aggregated readings
+4. **Parse Errors**: Tracked separately from fatal errors for data quality monitoring
+
+See `docs/plans/ml-data-collection.md` for the full plan.
 
 ## Environment
 
@@ -57,6 +87,12 @@ fly ssh console -C "/app/wandiweather --db /data/wandiweather.db --daily"
 SQLite with WAL mode. Schema managed via migrations.
 
 ```bash
-# Check current data
-sqlite3 data/wandiweather.db "SELECT * FROM stations WHERE active = 1"
+# Check current schema version
+sqlite3 data/wandiweather.db "SELECT MAX(version) FROM schema_migrations"
+
+# Check ingest health (last 24h)
+sqlite3 data/wandiweather.db "SELECT source, endpoint, COUNT(*), SUM(success) FROM ingest_runs WHERE started_at > datetime('now', '-1 day') GROUP BY source, endpoint"
+
+# Check raw payload storage
+sqlite3 data/wandiweather.db "SELECT source, COUNT(*), SUM(LENGTH(payload_compressed))/1024 as kb FROM raw_payloads GROUP BY source"
 ```

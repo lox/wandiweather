@@ -36,7 +36,20 @@ type Observation struct {
 	QCStatus       int
 	RawJSON        string
 	CreatedAt      time.Time
+
+	// Observation type for ML training data quality
+	// Values: "instant", "hourly_aggregate", "daily_aggregate", "unknown"
+	ObsType           string
+	AggregationPeriod sql.NullInt64 // Minutes: NULL for instant, 60 for hourly, 1440 for daily
 }
+
+// Observation type constants
+const (
+	ObsTypeInstant         = "instant"
+	ObsTypeHourlyAggregate = "hourly_aggregate"
+	ObsTypeDailyAggregate  = "daily_aggregate"
+	ObsTypeUnknown         = "unknown"
+)
 
 type Forecast struct {
 	ID            int64

@@ -1,6 +1,6 @@
 # WandiWeather Research Summary
 
-> **Last updated**: January 3, 2026
+> **Last updated**: February 1, 2026
 
 ## Key Findings
 
@@ -97,11 +97,13 @@ All active stations are at similar elevations (313-392m) making traditional elev
 
 ### Database
 
-SQLite with WAL mode. Schema version 6 includes:
-- `observations`: 5-minute PWS readings
-- `forecasts`: WU forecast snapshots (with `source` field for future multi-source)
-- `daily_summaries`: Computed daily stats with inversion detection
+SQLite with WAL mode. Schema version 19 includes:
+- `observations`: 5-minute PWS readings with `obs_type` (instant/hourly_aggregate/unknown)
+- `forecasts`: WU and BOM forecasts with `source` column
+- `daily_summaries`: Computed daily stats with inversion detection and regime flags
 - `forecast_verification`: Bias tracking with wind and precip fields
+- `ingest_runs`: Audit trail for all API fetches (HTTP status, record counts, parse errors)
+- `raw_payloads`: Compressed raw API responses for ML training (90-day retention)
 
 ### Forecast Verification Methodology
 

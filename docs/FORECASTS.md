@@ -1,13 +1,15 @@
 # Forecast System
 
+> **Last updated**: February 1, 2026
+
 ## Sources
 
 Two forecast sources are ingested and stored:
 
-| Source | Provider | Notes |
-|--------|----------|-------|
-| `wu` | Weather Underground | Used for front page display |
-| `bom` | Bureau of Meteorology | Displayed on forecast comparison page |
+| Source | Provider | Endpoint | Notes |
+|--------|----------|----------|-------|
+| `wu` | Weather Underground | `Fetch5Day()` | 5-day forecast, used for front page |
+| `bom` | Bureau of Meteorology | `FetchForecasts()` via FTP | 7-day forecast from Wangaratta |
 
 ## Front Page Forecast
 
@@ -57,10 +59,22 @@ GROUP BY f.source;
 - `forecasts` - Raw forecast data with `source` column (`wu` or `bom`)
 - `forecast_verification` - Compares forecasts to actual observations
 - `forecast_correction_stats` - Bias correction coefficients by source/day
+- `ingest_runs` - Audit trail for all forecast fetches (HTTP status, parse errors)
+- `raw_payloads` - Compressed raw JSON/XML for re-parsing (90-day retention)
 
 ## Key Files
 
-- [`internal/ingest/forecast.go`](../internal/ingest/forecast.go) - Fetches forecasts from APIs
+- [`internal/ingest/forecast.go`](../internal/ingest/forecast.go) - WU forecast fetching (`Fetch5Day`)
+- [`internal/ingest/bom.go`](../internal/ingest/bom.go) - BOM forecast fetching via FTP
 - [`internal/ingest/daily.go`](../internal/ingest/daily.go) - Daily verification job
 - [`internal/forecast/nowcast.go`](../internal/forecast/nowcast.go) - Nowcasting logic
 - [`internal/forecast/bias.go`](../internal/forecast/bias.go) - Bias correction
+
+## Data Collection for ML
+
+All forecast fetches are logged to `ingest_runs` with:
+- HTTP status, response size, record counts
+- Parse errors (tracked separately from fatal errors)
+- Linked to compressed raw payload in `raw_payloads`
+
+This enables future ML model training by preserving raw API responses for re-parsing.

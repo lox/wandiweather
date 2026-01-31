@@ -51,32 +51,42 @@ type Daypart struct {
 	WindSpeed         []*int     `json:"windSpeed"`
 }
 
-func (f *ForecastClient) Fetch7Day() ([]models.Forecast, string, error) {
+func (f *ForecastClient) Fetch5Day() ([]models.Forecast, string, *FetchResult, error) {
 	url := fmt.Sprintf("https://api.weather.com/v3/wx/forecast/daily/5day?geocode=%.4f,%.4f&format=json&units=m&language=en-AU&apiKey=%s", f.lat, f.lon, f.apiKey)
+	result := &FetchResult{}
 
 	resp, err := f.client.Get(url)
 	if err != nil {
-		return nil, "", fmt.Errorf("fetch forecast: %w", err)
+		result.Error = fmt.Errorf("fetch forecast: %w", err)
+		return nil, "", result, result.Error
 	}
 	defer resp.Body.Close()
 
+	result.HTTPStatus = resp.StatusCode
+
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, "", fmt.Errorf("fetch forecast: status %d: %s", resp.StatusCode, string(body))
+		result.ResponseSize = len(body)
+		result.Error = fmt.Errorf("fetch forecast: status %d: %s", resp.StatusCode, string(body))
+		return nil, string(body), result, result.Error
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, "", fmt.Errorf("read body: %w", err)
+		result.Error = fmt.Errorf("read body: %w", err)
+		return nil, "", result, result.Error
 	}
+	result.ResponseSize = len(body)
 
 	var data ForecastResponse
 	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, "", fmt.Errorf("unmarshal: %w", err)
+		result.Error = fmt.Errorf("unmarshal: %w", err)
+		return nil, string(body), result, result.Error
 	}
 
 	fetchedAt := time.Now().UTC()
 	var forecasts []models.Forecast
+	var parseErrors []string
 
 	var daypart *Daypart
 	if len(data.Daypart) > 0 {
@@ -86,6 +96,7 @@ func (f *ForecastClient) Fetch7Day() ([]models.Forecast, string, error) {
 	for i := range data.ValidTimeLocal {
 		validTime, err := time.Parse("2006-01-02T15:04:05-0700", data.ValidTimeLocal[i])
 		if err != nil {
+			parseErrors = append(parseErrors, fmt.Sprintf("validTimeLocal[%d]=%q: %v", i, data.ValidTimeLocal[i], err))
 			continue
 		}
 		validDate := time.Date(validTime.Year(), validTime.Month(), validTime.Day(), 0, 0, 0, 0, time.UTC)
@@ -144,7 +155,6 @@ func (f *ForecastClient) Fetch7Day() ([]models.Forecast, string, error) {
 				fc.PrecipChance = sql.NullInt64{Int64: int64(maxPrecipChance), Valid: true}
 			}
 
-			// Get daytime wind (use day index, skip night)
 			if dayIdx < len(daypart.WindSpeed) && daypart.WindSpeed[dayIdx] != nil {
 				fc.WindSpeed = sql.NullFloat64{Float64: float64(*daypart.WindSpeed[dayIdx]), Valid: true}
 			}
@@ -156,5 +166,11 @@ func (f *ForecastClient) Fetch7Day() ([]models.Forecast, string, error) {
 		forecasts = append(forecasts, fc)
 	}
 
-	return forecasts, string(body), nil
+	result.RecordCount = len(forecasts)
+	if len(parseErrors) > 0 {
+		result.ParseErrors = len(parseErrors)
+		result.ParseError = fmt.Sprintf("%d parse errors: %v", len(parseErrors), parseErrors[0])
+	}
+
+	return forecasts, string(body), result, nil
 }

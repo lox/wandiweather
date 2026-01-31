@@ -359,6 +359,78 @@ DELETE FROM forecast_verification;
 DELETE FROM forecast_correction_stats;
 `,
 	},
+	{
+		Version:     16,
+		Description: "Add ingest_runs table for audit trail",
+		SQL: `
+CREATE TABLE IF NOT EXISTS ingest_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at DATETIME NOT NULL,
+    finished_at DATETIME,
+    source TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    station_id TEXT,
+    location_id TEXT,
+    http_status INTEGER,
+    response_size_bytes INTEGER,
+    records_parsed INTEGER,
+    records_stored INTEGER,
+    success BOOLEAN NOT NULL DEFAULT FALSE,
+    error_message TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_runs_source_date ON ingest_runs(source, started_at);
+CREATE INDEX IF NOT EXISTS idx_ingest_runs_success ON ingest_runs(success, started_at);
+`,
+	},
+	{
+		Version:     17,
+		Description: "Add raw_payloads table for storing API responses",
+		SQL: `
+CREATE TABLE IF NOT EXISTS raw_payloads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ingest_run_id INTEGER REFERENCES ingest_runs(id),
+    fetched_at DATETIME NOT NULL,
+    source TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    station_id TEXT,
+    location_id TEXT,
+    payload_compressed BLOB NOT NULL,
+    payload_hash TEXT NOT NULL,
+    schema_version INTEGER DEFAULT 1,
+    UNIQUE(payload_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_raw_payloads_source_date ON raw_payloads(source, fetched_at);
+CREATE INDEX IF NOT EXISTS idx_raw_payloads_ingest_run ON raw_payloads(ingest_run_id);
+`,
+	},
+	{
+		Version:     18,
+		Description: "Add observation type for ML training (instant vs aggregate)",
+		SQL: `
+-- Add obs_type column: 'instant', 'hourly_aggregate', 'daily_aggregate'
+ALTER TABLE observations ADD COLUMN obs_type TEXT DEFAULT 'instant';
+
+-- Add aggregation period in minutes (NULL for instant, 60 for hourly, 1440 for daily)
+ALTER TABLE observations ADD COLUMN aggregation_period_minutes INTEGER;
+
+-- Backfill: observations from history endpoints are hourly aggregates
+-- These come from fetchHistory which uses /all/1day or /hourly/7day endpoints
+-- We can identify them by checking if they have hourly-aligned timestamps
+-- For now, mark all existing as 'unknown' and let new ingests set properly
+UPDATE observations SET obs_type = 'unknown' WHERE obs_type = 'instant';
+
+CREATE INDEX IF NOT EXISTS idx_observations_type ON observations(obs_type);
+`,
+	},
+	{
+		Version:     19,
+		Description: "Add parse_errors column to ingest_runs for tracking partial failures",
+		SQL: `
+ALTER TABLE ingest_runs ADD COLUMN parse_errors INTEGER DEFAULT 0;
+`,
+	},
 }
 
 func (s *Store) Migrate() error {

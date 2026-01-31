@@ -52,17 +52,21 @@ func (s *Store) GetActiveStations() ([]models.Station, error) {
 }
 
 func (s *Store) InsertObservation(obs models.Observation) error {
+	obsType := obs.ObsType
+	if obsType == "" {
+		obsType = models.ObsTypeInstant
+	}
 	_, err := s.db.Exec(`
-		INSERT INTO observations (station_id, observed_at, temp, humidity, dewpoint, pressure, wind_speed, wind_gust, wind_dir, precip_rate, precip_total, solar_radiation, uv, heat_index, wind_chill, qc_status, raw_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO observations (station_id, observed_at, temp, humidity, dewpoint, pressure, wind_speed, wind_gust, wind_dir, precip_rate, precip_total, solar_radiation, uv, heat_index, wind_chill, qc_status, raw_json, obs_type, aggregation_period_minutes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(station_id, observed_at) DO NOTHING
-	`, obs.StationID, obs.ObservedAt, obs.Temp, obs.Humidity, obs.Dewpoint, obs.Pressure, obs.WindSpeed, obs.WindGust, obs.WindDir, obs.PrecipRate, obs.PrecipTotal, obs.SolarRadiation, obs.UV, obs.HeatIndex, obs.WindChill, obs.QCStatus, obs.RawJSON)
+	`, obs.StationID, obs.ObservedAt, obs.Temp, obs.Humidity, obs.Dewpoint, obs.Pressure, obs.WindSpeed, obs.WindGust, obs.WindDir, obs.PrecipRate, obs.PrecipTotal, obs.SolarRadiation, obs.UV, obs.HeatIndex, obs.WindChill, obs.QCStatus, obs.RawJSON, obsType, obs.AggregationPeriod)
 	return err
 }
 
 func (s *Store) GetLatestObservation(stationID string) (*models.Observation, error) {
 	row := s.db.QueryRow(`
-		SELECT id, station_id, observed_at, temp, humidity, dewpoint, pressure, wind_speed, wind_gust, wind_dir, precip_rate, precip_total, solar_radiation, uv, heat_index, wind_chill, qc_status, raw_json, created_at
+		SELECT id, station_id, observed_at, temp, humidity, dewpoint, pressure, wind_speed, wind_gust, wind_dir, precip_rate, precip_total, solar_radiation, uv, heat_index, wind_chill, qc_status, raw_json, created_at, obs_type, aggregation_period_minutes
 		FROM observations
 		WHERE station_id = ?
 		ORDER BY observed_at DESC
@@ -70,19 +74,21 @@ func (s *Store) GetLatestObservation(stationID string) (*models.Observation, err
 	`, stationID)
 
 	var obs models.Observation
-	err := row.Scan(&obs.ID, &obs.StationID, &obs.ObservedAt, &obs.Temp, &obs.Humidity, &obs.Dewpoint, &obs.Pressure, &obs.WindSpeed, &obs.WindGust, &obs.WindDir, &obs.PrecipRate, &obs.PrecipTotal, &obs.SolarRadiation, &obs.UV, &obs.HeatIndex, &obs.WindChill, &obs.QCStatus, &obs.RawJSON, &obs.CreatedAt)
+	var obsType sql.NullString
+	err := row.Scan(&obs.ID, &obs.StationID, &obs.ObservedAt, &obs.Temp, &obs.Humidity, &obs.Dewpoint, &obs.Pressure, &obs.WindSpeed, &obs.WindGust, &obs.WindDir, &obs.PrecipRate, &obs.PrecipTotal, &obs.SolarRadiation, &obs.UV, &obs.HeatIndex, &obs.WindChill, &obs.QCStatus, &obs.RawJSON, &obs.CreatedAt, &obsType, &obs.AggregationPeriod)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	obs.ObsType = obsType.String
 	return &obs, nil
 }
 
 func (s *Store) GetObservations(stationID string, start, end time.Time) ([]models.Observation, error) {
 	rows, err := s.db.Query(`
-		SELECT id, station_id, observed_at, temp, humidity, dewpoint, pressure, wind_speed, wind_gust, wind_dir, precip_rate, precip_total, solar_radiation, uv, heat_index, wind_chill, qc_status, raw_json, created_at
+		SELECT id, station_id, observed_at, temp, humidity, dewpoint, pressure, wind_speed, wind_gust, wind_dir, precip_rate, precip_total, solar_radiation, uv, heat_index, wind_chill, qc_status, raw_json, created_at, obs_type, aggregation_period_minutes
 		FROM observations
 		WHERE station_id = ? AND observed_at >= ? AND observed_at <= ?
 		ORDER BY observed_at ASC
@@ -95,9 +101,11 @@ func (s *Store) GetObservations(stationID string, start, end time.Time) ([]model
 	var observations []models.Observation
 	for rows.Next() {
 		var obs models.Observation
-		if err := rows.Scan(&obs.ID, &obs.StationID, &obs.ObservedAt, &obs.Temp, &obs.Humidity, &obs.Dewpoint, &obs.Pressure, &obs.WindSpeed, &obs.WindGust, &obs.WindDir, &obs.PrecipRate, &obs.PrecipTotal, &obs.SolarRadiation, &obs.UV, &obs.HeatIndex, &obs.WindChill, &obs.QCStatus, &obs.RawJSON, &obs.CreatedAt); err != nil {
+		var obsType sql.NullString
+		if err := rows.Scan(&obs.ID, &obs.StationID, &obs.ObservedAt, &obs.Temp, &obs.Humidity, &obs.Dewpoint, &obs.Pressure, &obs.WindSpeed, &obs.WindGust, &obs.WindDir, &obs.PrecipRate, &obs.PrecipTotal, &obs.SolarRadiation, &obs.UV, &obs.HeatIndex, &obs.WindChill, &obs.QCStatus, &obs.RawJSON, &obs.CreatedAt, &obsType, &obs.AggregationPeriod); err != nil {
 			return nil, err
 		}
+		obs.ObsType = obsType.String
 		observations = append(observations, obs)
 	}
 	return observations, rows.Err()

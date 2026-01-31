@@ -3,10 +3,12 @@ module github.com/lox/wandiweather
 go 1.25
 
 require (
+	github.com/alecthomas/kong v1.13.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/jlaffaye/ftp v0.2.0
 	github.com/openai/openai-go/v3 v3.15.0
 	github.com/prometheus/client_golang v1.23.2
+	github.com/titusjaka/kong-dotenv-go v0.1.0
 	golang.org/x/image v0.35.0
 	modernc.org/sqlite v1.41.0
 )
@@ -18,6 +20,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
+	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect

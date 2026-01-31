@@ -69,31 +69,40 @@ type bomText struct {
 	Value string `xml:",chardata"`
 }
 
-func (b *BOMClient) FetchForecasts() ([]models.Forecast, string, error) {
+func (b *BOMClient) FetchForecasts() ([]models.Forecast, string, *FetchResult, error) {
+	result := &FetchResult{}
+
 	conn, err := ftp.Dial(bomFTPHost, ftp.DialWithTimeout(30*time.Second))
 	if err != nil {
-		return nil, "", fmt.Errorf("ftp dial: %w", err)
+		result.Error = fmt.Errorf("ftp dial: %w", err)
+		return nil, "", result, result.Error
 	}
 	defer conn.Quit()
 
 	if err := conn.Login("anonymous", "anonymous"); err != nil {
-		return nil, "", fmt.Errorf("ftp login: %w", err)
+		result.Error = fmt.Errorf("ftp login: %w", err)
+		return nil, "", result, result.Error
 	}
 
 	resp, err := conn.Retr(bomForecastFile)
 	if err != nil {
-		return nil, "", fmt.Errorf("ftp retr: %w", err)
+		result.Error = fmt.Errorf("ftp retr: %w", err)
+		return nil, "", result, result.Error
 	}
 	defer resp.Close()
 
 	body, err := io.ReadAll(resp)
 	if err != nil {
-		return nil, "", fmt.Errorf("read body: %w", err)
+		result.Error = fmt.Errorf("read body: %w", err)
+		return nil, "", result, result.Error
 	}
+	result.ResponseSize = len(body)
+	result.HTTPStatus = 200 // FTP success
 
 	var product bomProduct
 	if err := xml.Unmarshal(body, &product); err != nil {
-		return nil, "", fmt.Errorf("unmarshal xml: %w", err)
+		result.Error = fmt.Errorf("unmarshal xml: %w", err)
+		return nil, string(body), result, result.Error
 	}
 
 	var targetArea *bomArea
@@ -104,22 +113,22 @@ func (b *BOMClient) FetchForecasts() ([]models.Forecast, string, error) {
 		}
 	}
 	if targetArea == nil {
-		return nil, "", fmt.Errorf("area %s not found in forecast", b.areaCode)
+		result.Error = fmt.Errorf("area %s not found in forecast", b.areaCode)
+		return nil, string(body), result, result.Error
 	}
 
 	fetchedAt := time.Now().UTC()
 	var forecasts []models.Forecast
+	var parseErrors []string
 
-	// BOM uses Australian Eastern time for forecast periods
 	mel, _ := time.LoadLocation("Australia/Melbourne")
 
 	for _, period := range targetArea.Periods {
 		startTime, err := time.Parse(time.RFC3339, period.StartTime)
 		if err != nil {
+			parseErrors = append(parseErrors, fmt.Sprintf("period[%d].StartTime=%q: %v", period.Index, period.StartTime, err))
 			continue
 		}
-		// Convert to local time first, then extract the date
-		// BOM period start times are at midnight local time for the forecast day
 		localStart := startTime.In(mel)
 		validDate := time.Date(localStart.Year(), localStart.Month(), localStart.Day(), 0, 0, 0, 0, time.UTC)
 
@@ -151,7 +160,6 @@ func (b *BOMClient) FetchForecasts() ([]models.Forecast, string, error) {
 			case "precis":
 				fc.Narrative = sql.NullString{String: text.Value, Valid: true}
 			case "probability_of_precipitation":
-				// Parse "20%" -> 20
 				s := text.Value
 				if len(s) > 0 && s[len(s)-1] == '%' {
 					if v, err := strconv.Atoi(s[:len(s)-1]); err == nil {
@@ -164,5 +172,11 @@ func (b *BOMClient) FetchForecasts() ([]models.Forecast, string, error) {
 		forecasts = append(forecasts, fc)
 	}
 
-	return forecasts, string(body), nil
+	result.RecordCount = len(forecasts)
+	if len(parseErrors) > 0 {
+		result.ParseErrors = len(parseErrors)
+		result.ParseError = fmt.Sprintf("%d parse errors: %v", len(parseErrors), parseErrors[0])
+	}
+
+	return forecasts, string(body), result, nil
 }
