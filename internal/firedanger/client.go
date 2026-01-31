@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-	"strings"
 	"time"
+
+	"github.com/lox/wandiweather/internal/htmlutil"
+	"github.com/lox/wandiweather/internal/httputil"
 )
 
 const (
@@ -76,7 +78,7 @@ type Client struct {
 // NewClient creates a new CFA fire danger client
 func NewClient(feedURL, district string) *Client {
 	return &Client{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: httputil.NewClient(),
 		feedURL:    feedURL,
 		district:   district,
 	}
@@ -151,7 +153,7 @@ func (c *Client) parseItems(items []rssItem) []DayForecast {
 		}
 
 		// Extract rating from description
-		desc := cleanHTML(item.Description)
+		desc := htmlutil.ToText(item.Description)
 		if match := ratingPattern.FindStringSubmatch(desc); len(match) > 1 {
 			forecast.Rating = Rating(match[1])
 		}
@@ -182,27 +184,4 @@ func parseItemDate(title string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// cleanHTML removes HTML tags from RSS description
-func cleanHTML(s string) string {
-	// Unescape HTML entities
-	s = strings.ReplaceAll(s, "&lt;", "<")
-	s = strings.ReplaceAll(s, "&gt;", ">")
-	s = strings.ReplaceAll(s, "&amp;", "&")
-	s = strings.ReplaceAll(s, "<br/>", " ")
-	s = strings.ReplaceAll(s, "<br />", " ")
 
-	// Strip remaining tags
-	result := strings.Builder{}
-	inTag := false
-	for _, r := range s {
-		switch {
-		case r == '<':
-			inTag = true
-		case r == '>':
-			inTag = false
-		case !inTag:
-			result.WriteRune(r)
-		}
-	}
-	return strings.TrimSpace(result.String())
-}

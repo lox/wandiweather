@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lox/wandiweather/internal/httputil"
 	"github.com/lox/wandiweather/internal/models"
 )
 
@@ -21,7 +22,7 @@ type ForecastClient struct {
 func NewForecastClient(apiKey string, lat, lon float64) *ForecastClient {
 	return &ForecastClient{
 		apiKey: apiKey,
-		client: &http.Client{Timeout: 30 * time.Second},
+		client: httputil.NewClient(),
 		lat:    lat,
 		lon:    lon,
 	}

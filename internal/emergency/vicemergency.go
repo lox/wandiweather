@@ -10,6 +10,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lox/wandiweather/internal/htmlutil"
+	"github.com/lox/wandiweather/internal/httputil"
 )
 
 const (
@@ -64,7 +67,7 @@ type Client struct {
 // NewClient creates a new VicEmergency client centered on a location.
 func NewClient(lat, lon, radiusKM float64) *Client {
 	return &Client{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: httputil.NewClient(),
 		centerLat:  lat,
 		centerLon:  lon,
 		radiusKM:   radiusKM,
@@ -171,7 +174,7 @@ func (c *Client) filterAlerts(features []Feature) []Alert {
 			Distance:    dist,
 			Severity:    parseSeverity(f.Properties.Name, f.Properties.SourceTitle),
 			Headline:    f.Properties.WebHeadline,
-			Body:        cleanHTML(f.Properties.WebBody),
+			Body:        htmlutil.ToText(f.Properties.WebBody),
 			Text:        f.Properties.Text,
 			URL:         buildURL(id),
 			Lat:         lat,
@@ -262,27 +265,6 @@ func extractCoordinates(g *Geometry) (lat, lon float64) {
 		}
 	}
 	return 0, 0
-}
-
-// cleanHTML removes HTML tags from text for display.
-func cleanHTML(s string) string {
-	// Simple tag removal - could use html.UnescapeString for entities
-	result := strings.Builder{}
-	inTag := false
-	for _, r := range s {
-		switch {
-		case r == '<':
-			inTag = true
-		case r == '>':
-			inTag = false
-		case !inTag:
-			result.WriteRune(r)
-		}
-	}
-	// Clean up whitespace
-	text := result.String()
-	text = strings.ReplaceAll(text, "\n\n\n", "\n\n")
-	return strings.TrimSpace(text)
 }
 
 // SeverityName returns a human-readable severity label.

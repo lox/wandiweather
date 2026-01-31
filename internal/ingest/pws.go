@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/lox/wandiweather/internal/httputil"
 	"github.com/lox/wandiweather/internal/metrics"
 	"github.com/lox/wandiweather/internal/models"
 )
@@ -21,7 +22,7 @@ type PWS struct {
 func NewPWS(apiKey string) *PWS {
 	return &PWS{
 		apiKey: apiKey,
-		client: &http.Client{Timeout: 30 * time.Second},
+		client: httputil.NewClient(),
 	}
 }
 

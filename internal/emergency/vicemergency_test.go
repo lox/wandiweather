@@ -65,21 +65,4 @@ func TestParseSeverity(t *testing.T) {
 	}
 }
 
-func TestCleanHTML(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"<p>Hello</p>", "Hello"},
-		{"<strong>Bold</strong> text", "Bold text"},
-		{"No tags here", "No tags here"},
-		{"<div><p>Nested</p></div>", "Nested"},
-	}
 
-	for _, tt := range tests {
-		got := cleanHTML(tt.input)
-		if got != tt.expected {
-			t.Errorf("cleanHTML(%q) = %q, want %q", tt.input, got, tt.expected)
-		}
-	}
-}
