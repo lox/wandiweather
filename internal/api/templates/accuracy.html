@@ -232,6 +232,27 @@
         </div>
         {{end}}
         
+        {{if .CorrectedStats}}
+        <div class="section-title">Bias-Corrected Forecast Accuracy</div>
+        <div class="stats-card">
+            <div class="source-compare">
+                <div class="source-box" style="grid-column: span 2;">
+                    <div class="source-label" style="color: #4ecdc4;">CORRECTED</div>
+                    <div class="stat-value {{if le .CorrectedStats.MAEMax.Float64 2.0}}good{{else if le .CorrectedStats.MAEMax.Float64 3.0}}warn{{else}}bad{{end}}">±{{printf "%.1f" .CorrectedStats.MAEMax.Float64}}°</div>
+                    <div class="stat-label">Max temp error</div>
+                    <div class="stat-sublabel">avg {{printf "%+.1f" .CorrectedStats.AvgMaxBias.Float64}}° bias</div>
+                    <div class="stat-row">
+                        <div class="stat-mini">
+                            <div class="value {{if le .CorrectedStats.MAEMin.Float64 1.5}}good{{else if le .CorrectedStats.MAEMin.Float64 2.0}}warn{{else}}bad{{end}}">±{{printf "%.1f" .CorrectedStats.MAEMin.Float64}}°</div>
+                            <div class="label">Min error</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="stat-count">{{.CorrectedStats.Count}} days · BOM max + WU min with rolling bias correction</div>
+        </div>
+        {{end}}
+        
         {{if .LeadTimeData}}
         <div class="section-title">Accuracy by Lead Time</div>
         <div class="stats-card">

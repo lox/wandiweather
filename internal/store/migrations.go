@@ -310,6 +310,39 @@ CREATE TABLE IF NOT EXISTS fire_danger_ratings (
 CREATE INDEX IF NOT EXISTS idx_fdr_date ON fire_danger_ratings(date);
 `,
 	},
+	{
+		Version:     14,
+		Description: "Add displayed_forecasts table for tracking corrected forecast accuracy",
+		SQL: `
+CREATE TABLE IF NOT EXISTS displayed_forecasts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    displayed_at TEXT NOT NULL,
+    valid_date TEXT NOT NULL,
+    day_of_forecast INTEGER NOT NULL,
+    wu_forecast_id INTEGER,
+    bom_forecast_id INTEGER,
+    raw_temp_max REAL,
+    raw_temp_min REAL,
+    corrected_temp_max REAL,
+    corrected_temp_min REAL,
+    bias_applied_max REAL,
+    bias_applied_min REAL,
+    bias_day_used_max INTEGER,
+    bias_day_used_min INTEGER,
+    bias_samples_max INTEGER,
+    bias_samples_min INTEGER,
+    bias_fallback_max BOOLEAN,
+    bias_fallback_min BOOLEAN,
+    source_max TEXT,
+    source_min TEXT,
+    FOREIGN KEY (wu_forecast_id) REFERENCES forecasts(id),
+    FOREIGN KEY (bom_forecast_id) REFERENCES forecasts(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_displayed_forecasts_unique
+ON displayed_forecasts(valid_date, day_of_forecast, wu_forecast_id, bom_forecast_id);
+`,
+	},
 }
 
 func (s *Store) Migrate() error {

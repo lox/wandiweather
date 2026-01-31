@@ -716,19 +716,26 @@ func (s *Store) GetTempChangeRate(stationID string) (sql.NullFloat64, error) {
 
 func (s *Store) GetLatestForecasts() (map[string][]models.Forecast, error) {
 	today := time.Now().UTC().Format("2006-01-02")
+	// Get the most recent forecast with valid temp data for each source/date combination
+	// This ensures we don't lose earlier forecasts when a later fetch has NULL temps
 	rows, err := s.db.Query(`
-		WITH latest AS (
-			SELECT source, MAX(fetched_at) as max_fetched
-			FROM forecasts
-			GROUP BY source
+		WITH ranked AS (
+			SELECT f.*,
+			       ROW_NUMBER() OVER (
+			           PARTITION BY f.source, SUBSTR(f.valid_date, 1, 10)
+			           ORDER BY 
+			               CASE WHEN f.temp_max IS NOT NULL OR f.temp_min IS NOT NULL THEN 0 ELSE 1 END,
+			               f.fetched_at DESC
+			       ) as rn
+			FROM forecasts f
+			WHERE SUBSTR(f.valid_date, 1, 10) >= ?
 		)
-		SELECT f.id, f.source, f.fetched_at, f.valid_date, f.day_of_forecast, 
-		       f.temp_max, f.temp_min, f.precip_chance, f.precip_amount, f.precip_range, 
-		       f.wind_speed, f.wind_dir, f.narrative
-		FROM forecasts f
-		JOIN latest l ON f.source = l.source AND f.fetched_at = l.max_fetched
-		WHERE SUBSTR(f.valid_date, 1, 10) >= ?
-		ORDER BY f.valid_date, f.source
+		SELECT id, source, fetched_at, valid_date, day_of_forecast, 
+		       temp_max, temp_min, precip_chance, precip_amount, precip_range, 
+		       wind_speed, wind_dir, narrative
+		FROM ranked
+		WHERE rn = 1
+		ORDER BY valid_date, source
 	`, today)
 	if err != nil {
 		return nil, err
@@ -1323,4 +1330,136 @@ func (s *Store) GetTodayRegime(stationID string, today time.Time) (string, error
 		return "clear_calm", nil
 	}
 	return "", nil
+}
+
+// UpsertDisplayedForecast logs a displayed forecast with correction metadata.
+// Uses ON CONFLICT DO NOTHING to avoid duplicates when the same forecast is shown multiple times.
+func (s *Store) UpsertDisplayedForecast(df models.DisplayedForecast) error {
+	_, err := s.db.Exec(`
+		INSERT INTO displayed_forecasts (
+			displayed_at, valid_date, day_of_forecast,
+			wu_forecast_id, bom_forecast_id,
+			raw_temp_max, raw_temp_min,
+			corrected_temp_max, corrected_temp_min,
+			bias_applied_max, bias_applied_min,
+			bias_day_used_max, bias_day_used_min,
+			bias_samples_max, bias_samples_min,
+			bias_fallback_max, bias_fallback_min,
+			source_max, source_min
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(valid_date, day_of_forecast, wu_forecast_id, bom_forecast_id) DO NOTHING
+	`, df.DisplayedAt, df.ValidDate.Format("2006-01-02"), df.DayOfForecast,
+		df.WUForecastID, df.BOMForecastID,
+		df.RawTempMax, df.RawTempMin,
+		df.CorrectedTempMax, df.CorrectedTempMin,
+		df.BiasAppliedMax, df.BiasAppliedMin,
+		df.BiasDayUsedMax, df.BiasDayUsedMin,
+		df.BiasSamplesMax, df.BiasSamplesMin,
+		df.BiasFallbackMax, df.BiasFallbackMin,
+		df.SourceMax, df.SourceMin)
+	return err
+}
+
+// CorrectedAccuracyStats holds accuracy stats for corrected forecasts.
+type CorrectedAccuracyStats struct {
+	Count      int
+	AvgMaxBias sql.NullFloat64
+	AvgMinBias sql.NullFloat64
+	MAEMax     sql.NullFloat64
+	MAEMin     sql.NullFloat64
+}
+
+// GetCorrectedAccuracyStats returns accuracy statistics for displayed (corrected) forecasts
+// compared to actual observations from daily_summaries.
+// Uses a CTE to select one row per valid_date (latest displayed) to avoid over-counting.
+func (s *Store) GetCorrectedAccuracyStats(stationID string, days int) (*CorrectedAccuracyStats, error) {
+	row := s.db.QueryRow(`
+		WITH latest AS (
+			SELECT df.*,
+				ROW_NUMBER() OVER (
+					PARTITION BY SUBSTR(df.valid_date, 1, 10)
+					ORDER BY df.displayed_at DESC
+				) AS rn
+			FROM displayed_forecasts df
+			WHERE df.valid_date >= DATE('now', '-' || ? || ' days')
+		)
+		SELECT 
+			COUNT(*) as count,
+			AVG(latest.corrected_temp_max - ds.temp_max) as avg_max_bias,
+			AVG(latest.corrected_temp_min - ds.temp_min) as avg_min_bias,
+			AVG(ABS(latest.corrected_temp_max - ds.temp_max)) as mae_max,
+			AVG(ABS(latest.corrected_temp_min - ds.temp_min)) as mae_min
+		FROM latest
+		JOIN daily_summaries ds ON SUBSTR(latest.valid_date, 1, 10) = SUBSTR(ds.date, 1, 10)
+		WHERE latest.rn = 1
+			AND ds.station_id = ?
+			AND latest.corrected_temp_max IS NOT NULL
+			AND latest.corrected_temp_min IS NOT NULL
+			AND ds.temp_max IS NOT NULL
+			AND ds.temp_min IS NOT NULL
+	`, days, stationID)
+
+	var stats CorrectedAccuracyStats
+	err := row.Scan(&stats.Count, &stats.AvgMaxBias, &stats.AvgMinBias, &stats.MAEMax, &stats.MAEMin)
+	if err != nil {
+		return nil, err
+	}
+	return &stats, nil
+}
+
+// CorrectedVerificationRow is a single row of corrected forecast verification.
+type CorrectedVerificationRow struct {
+	ValidDate        time.Time
+	CorrectedTempMax sql.NullFloat64
+	CorrectedTempMin sql.NullFloat64
+	ActualTempMax    sql.NullFloat64
+	ActualTempMin    sql.NullFloat64
+	BiasTempMax      sql.NullFloat64
+	BiasTempMin      sql.NullFloat64
+}
+
+// GetCorrectedVerificationHistory returns recent corrected forecast verification records.
+// Uses a CTE to select one row per valid_date (latest displayed) to avoid duplicates.
+func (s *Store) GetCorrectedVerificationHistory(stationID string, limit int) ([]CorrectedVerificationRow, error) {
+	rows, err := s.db.Query(`
+		WITH latest AS (
+			SELECT df.*,
+				ROW_NUMBER() OVER (
+					PARTITION BY SUBSTR(df.valid_date, 1, 10)
+					ORDER BY df.displayed_at DESC
+				) AS rn
+			FROM displayed_forecasts df
+		)
+		SELECT 
+			latest.valid_date,
+			latest.corrected_temp_max,
+			latest.corrected_temp_min,
+			ds.temp_max,
+			ds.temp_min,
+			latest.corrected_temp_max - ds.temp_max as bias_max,
+			latest.corrected_temp_min - ds.temp_min as bias_min
+		FROM latest
+		JOIN daily_summaries ds ON SUBSTR(latest.valid_date, 1, 10) = SUBSTR(ds.date, 1, 10)
+		WHERE latest.rn = 1
+			AND ds.station_id = ?
+			AND latest.corrected_temp_max IS NOT NULL
+			AND ds.temp_max IS NOT NULL
+		ORDER BY latest.valid_date DESC
+		LIMIT ?
+	`, stationID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []CorrectedVerificationRow
+	for rows.Next() {
+		var r CorrectedVerificationRow
+		if err := rows.Scan(&r.ValidDate, &r.CorrectedTempMax, &r.CorrectedTempMin,
+			&r.ActualTempMax, &r.ActualTempMin, &r.BiasTempMax, &r.BiasTempMin); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
 }

@@ -121,3 +121,26 @@ type VerificationStats struct {
 	AvgPrecipBias sql.NullFloat64
 	MAEPrecip    sql.NullFloat64
 }
+
+type DisplayedForecast struct {
+	ID               int64
+	DisplayedAt      time.Time
+	ValidDate        time.Time
+	DayOfForecast    int
+	WUForecastID     sql.NullInt64
+	BOMForecastID    sql.NullInt64
+	RawTempMax       sql.NullFloat64
+	RawTempMin       sql.NullFloat64
+	CorrectedTempMax sql.NullFloat64
+	CorrectedTempMin sql.NullFloat64
+	BiasAppliedMax   sql.NullFloat64
+	BiasAppliedMin   sql.NullFloat64
+	BiasDayUsedMax   sql.NullInt64
+	BiasDayUsedMin   sql.NullInt64
+	BiasSamplesMax   sql.NullInt64
+	BiasSamplesMin   sql.NullInt64
+	BiasFallbackMax  sql.NullBool
+	BiasFallbackMin  sql.NullBool
+	SourceMax        sql.NullString
+	SourceMin        sql.NullString
+}

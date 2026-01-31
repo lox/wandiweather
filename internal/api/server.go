@@ -215,15 +215,21 @@ type TodayForecast struct {
 }
 
 type ForecastExplanation struct {
-	MaxSource       string  // "bom" or "wu"
-	MaxRaw          float64 // raw forecast value
-	MaxBiasApplied  float64 // bias correction applied
-	MaxNowcast      float64 // nowcast adjustment (if any)
-	MaxFinal        float64 // final displayed value
-	MinSource       string
-	MinRaw          float64
-	MinBiasApplied  float64
-	MinFinal        float64
+	MaxSource         string  // "bom" or "wu"
+	MaxRaw            float64 // raw forecast value
+	MaxBiasApplied    float64 // bias correction applied
+	MaxBiasDayUsed    int     // which day's bias was used (-1 if none)
+	MaxBiasSamples    int     // how many samples the bias is based on
+	MaxBiasFallback   bool    // true if fallback day was used
+	MaxNowcast        float64 // nowcast adjustment (if any)
+	MaxFinal          float64 // final displayed value
+	MinSource         string
+	MinRaw            float64
+	MinBiasApplied    float64
+	MinBiasDayUsed    int     // which day's bias was used (-1 if none)
+	MinBiasSamples    int     // how many samples the bias is based on
+	MinBiasFallback   bool    // true if fallback day was used
+	MinFinal          float64
 }
 
 type TodayStats struct {
@@ -399,16 +405,17 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 		todayStr := todayDate.Format("2006-01-02")
 
 		// Find today's forecasts from both sources
+		// Prefer forecasts that have valid temp data (skip day-0 entries with NULL temps)
 		var wuForecast, bomForecast *models.Forecast
 		for _, fc := range forecasts["wu"] {
-			if fc.ValidDate.Format("2006-01-02") == todayStr {
+			if fc.ValidDate.Format("2006-01-02") == todayStr && (fc.TempMax.Valid || fc.TempMin.Valid) {
 				f := fc
 				wuForecast = &f
 				break
 			}
 		}
 		for _, fc := range forecasts["bom"] {
-			if fc.ValidDate.Format("2006-01-02") == todayStr {
+			if fc.ValidDate.Format("2006-01-02") == todayStr && (fc.TempMax.Valid || fc.TempMin.Valid) {
 				f := fc
 				bomForecast = &f
 				break
@@ -425,9 +432,15 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 				exp.MaxRaw = bomForecast.TempMax.Float64
 				tf.TempMax = bomForecast.TempMax.Float64
 
-				if bias := getCorrectionBias(correctionStats, "bom", "tmax", bomForecast.DayOfForecast); bias != 0 {
-					exp.MaxBiasApplied = bias
-					tf.TempMax = bomForecast.TempMax.Float64 - bias
+				biasResult := getCorrectionBiasWithFallback(correctionStats, "bom", "tmax", bomForecast.DayOfForecast)
+				if biasResult.DayUsed >= 0 {
+					exp.MaxBiasApplied = biasResult.Bias
+					exp.MaxBiasDayUsed = biasResult.DayUsed
+					exp.MaxBiasSamples = biasResult.Samples
+					exp.MaxBiasFallback = biasResult.IsFallback
+					tf.TempMax = bomForecast.TempMax.Float64 - biasResult.Bias
+				} else {
+					exp.MaxBiasDayUsed = -1
 				}
 				tf.TempMaxRaw = math.Round(tf.TempMax)
 
@@ -453,9 +466,15 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 				exp.MaxRaw = wuForecast.TempMax.Float64
 				tf.TempMax = wuForecast.TempMax.Float64
 
-				if bias := getCorrectionBias(correctionStats, "wu", "tmax", wuForecast.DayOfForecast); bias != 0 {
-					exp.MaxBiasApplied = bias
-					tf.TempMax = wuForecast.TempMax.Float64 - bias
+				biasResult := getCorrectionBiasWithFallback(correctionStats, "wu", "tmax", wuForecast.DayOfForecast)
+				if biasResult.DayUsed >= 0 {
+					exp.MaxBiasApplied = biasResult.Bias
+					exp.MaxBiasDayUsed = biasResult.DayUsed
+					exp.MaxBiasSamples = biasResult.Samples
+					exp.MaxBiasFallback = biasResult.IsFallback
+					tf.TempMax = wuForecast.TempMax.Float64 - biasResult.Bias
+				} else {
+					exp.MaxBiasDayUsed = -1
 				}
 				tf.TempMaxRaw = math.Round(tf.TempMax)
 				tf.TempMax = math.Round(tf.TempMax)
@@ -468,9 +487,15 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 				exp.MinRaw = wuForecast.TempMin.Float64
 				tf.TempMin = wuForecast.TempMin.Float64
 
-				if bias := getCorrectionBias(correctionStats, "wu", "tmin", wuForecast.DayOfForecast); bias != 0 {
-					exp.MinBiasApplied = bias
-					tf.TempMin = wuForecast.TempMin.Float64 - bias
+				biasResult := getCorrectionBiasWithFallback(correctionStats, "wu", "tmin", wuForecast.DayOfForecast)
+				if biasResult.DayUsed >= 0 {
+					exp.MinBiasApplied = biasResult.Bias
+					exp.MinBiasDayUsed = biasResult.DayUsed
+					exp.MinBiasSamples = biasResult.Samples
+					exp.MinBiasFallback = biasResult.IsFallback
+					tf.TempMin = wuForecast.TempMin.Float64 - biasResult.Bias
+				} else {
+					exp.MinBiasDayUsed = -1
 				}
 				tf.TempMin = math.Round(tf.TempMin)
 				exp.MinFinal = tf.TempMin
@@ -480,9 +505,15 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 				exp.MinRaw = bomForecast.TempMin.Float64
 				tf.TempMin = bomForecast.TempMin.Float64
 
-				if bias := getCorrectionBias(correctionStats, "bom", "tmin", bomForecast.DayOfForecast); bias != 0 {
-					exp.MinBiasApplied = bias
-					tf.TempMin = bomForecast.TempMin.Float64 - bias
+				biasResult := getCorrectionBiasWithFallback(correctionStats, "bom", "tmin", bomForecast.DayOfForecast)
+				if biasResult.DayUsed >= 0 {
+					exp.MinBiasApplied = biasResult.Bias
+					exp.MinBiasDayUsed = biasResult.DayUsed
+					exp.MinBiasSamples = biasResult.Samples
+					exp.MinBiasFallback = biasResult.IsFallback
+					tf.TempMin = bomForecast.TempMin.Float64 - biasResult.Bias
+				} else {
+					exp.MinBiasDayUsed = -1
 				}
 				tf.TempMin = math.Round(tf.TempMin)
 				exp.MinFinal = tf.TempMin
@@ -510,6 +541,38 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 			tf.Narrative = buildGeneratedNarrative(day)
 
 			data.TodayForecast = tf
+
+			// Log displayed forecast for accuracy tracking
+			// Only log when both WU and BOM forecasts are present to ensure unique index works
+			// (SQLite treats NULL as distinct, so ON CONFLICT wouldn't dedupe otherwise)
+			if wuForecast != nil && bomForecast != nil {
+				dayOfForecast := bomForecast.DayOfForecast
+				df := models.DisplayedForecast{
+					DisplayedAt:   time.Now().UTC(),
+					ValidDate:     todayDate,
+					DayOfForecast: dayOfForecast,
+				}
+				df.WUForecastID = sql.NullInt64{Int64: wuForecast.ID, Valid: true}
+				df.BOMForecastID = sql.NullInt64{Int64: bomForecast.ID, Valid: true}
+				df.RawTempMax = sql.NullFloat64{Float64: exp.MaxRaw, Valid: exp.MaxSource != ""}
+				df.RawTempMin = sql.NullFloat64{Float64: exp.MinRaw, Valid: exp.MinSource != ""}
+				df.CorrectedTempMax = sql.NullFloat64{Float64: exp.MaxFinal, Valid: exp.MaxSource != ""}
+				df.CorrectedTempMin = sql.NullFloat64{Float64: exp.MinFinal, Valid: exp.MinSource != ""}
+				df.BiasAppliedMax = sql.NullFloat64{Float64: exp.MaxBiasApplied, Valid: exp.MaxBiasDayUsed >= 0}
+				df.BiasAppliedMin = sql.NullFloat64{Float64: exp.MinBiasApplied, Valid: exp.MinBiasDayUsed >= 0}
+				df.BiasDayUsedMax = sql.NullInt64{Int64: int64(exp.MaxBiasDayUsed), Valid: exp.MaxBiasDayUsed >= 0}
+				df.BiasDayUsedMin = sql.NullInt64{Int64: int64(exp.MinBiasDayUsed), Valid: exp.MinBiasDayUsed >= 0}
+				df.BiasSamplesMax = sql.NullInt64{Int64: int64(exp.MaxBiasSamples), Valid: exp.MaxBiasDayUsed >= 0}
+				df.BiasSamplesMin = sql.NullInt64{Int64: int64(exp.MinBiasSamples), Valid: exp.MinBiasDayUsed >= 0}
+				df.BiasFallbackMax = sql.NullBool{Bool: exp.MaxBiasFallback, Valid: exp.MaxBiasDayUsed >= 0}
+				df.BiasFallbackMin = sql.NullBool{Bool: exp.MinBiasFallback, Valid: exp.MinBiasDayUsed >= 0}
+				df.SourceMax = sql.NullString{String: exp.MaxSource, Valid: exp.MaxSource != ""}
+				df.SourceMin = sql.NullString{String: exp.MinSource, Valid: exp.MinSource != ""}
+
+				if err := s.store.UpsertDisplayedForecast(df); err != nil {
+					log.Printf("api: log displayed forecast: %v", err)
+				}
+			}
 		}
 	}
 
@@ -835,23 +898,74 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 
 const minBiasSamples = 7
 
-func getCorrectionBias(stats map[string]map[string]map[int]*store.CorrectionStats, source, target string, dayOfForecast int) float64 {
-	if stats == nil {
-		return 0
+// BiasResult contains the bias correction and metadata about how it was determined
+type BiasResult struct {
+	Bias       float64
+	DayUsed    int  // which day's stats were used (-1 if none)
+	Samples    int  // sample size the bias is based on
+	IsFallback bool // true if a fallback day was used
+}
+
+func getCorrectionBiasWithFallback(stats map[string]map[string]map[int]*store.CorrectionStats, source, target string, dayOfForecast int) BiasResult {
+	if stats == nil || stats[source] == nil || stats[source][target] == nil {
+		return BiasResult{DayUsed: -1}
 	}
-	if stats[source] == nil {
-		return 0
-	}
-	if stats[source][target] == nil {
-		return 0
-	}
-	if s := stats[source][target][dayOfForecast]; s != nil {
-		if s.SampleSize < minBiasSamples {
-			return 0
+
+	targetStats := stats[source][target]
+
+	// First, try the exact day
+	if s := targetStats[dayOfForecast]; s != nil && s.SampleSize >= minBiasSamples {
+		bias := s.MeanBias
+		if bias > forecast.MaxBiasCorrection {
+			bias = forecast.MaxBiasCorrection
+		} else if bias < -forecast.MaxBiasCorrection {
+			bias = -forecast.MaxBiasCorrection
 		}
-		return s.MeanBias
+		return BiasResult{
+			Bias:       bias,
+			DayUsed:    dayOfForecast,
+			Samples:    s.SampleSize,
+			IsFallback: false,
+		}
 	}
-	return 0
+
+	// Fallback: find the nearest day with sufficient samples
+	// Search nearby days (prefer closer days, then lower days on tie)
+	searchOrder := []int{}
+	for delta := 1; delta <= 14; delta++ {
+		// Try lower day first (prefer earlier lead times on tie)
+		if dayOfForecast-delta >= 0 {
+			searchOrder = append(searchOrder, dayOfForecast-delta)
+		}
+		if dayOfForecast+delta <= 14 {
+			searchOrder = append(searchOrder, dayOfForecast+delta)
+		}
+	}
+
+	for _, day := range searchOrder {
+		if s := targetStats[day]; s != nil && s.SampleSize >= minBiasSamples {
+			bias := s.MeanBias
+			if bias > forecast.MaxBiasCorrection {
+				bias = forecast.MaxBiasCorrection
+			} else if bias < -forecast.MaxBiasCorrection {
+				bias = -forecast.MaxBiasCorrection
+			}
+			return BiasResult{
+				Bias:       bias,
+				DayUsed:    day,
+				Samples:    s.SampleSize,
+				IsFallback: true,
+			}
+		}
+	}
+
+	return BiasResult{DayUsed: -1}
+}
+
+// getCorrectionBias is kept for backward compatibility with other parts of the code
+func getCorrectionBias(stats map[string]map[string]map[int]*store.CorrectionStats, source, target string, dayOfForecast int) float64 {
+	result := getCorrectionBiasWithFallback(stats, source, target, dayOfForecast)
+	return result.Bias
 }
 
 func (s *Server) handleForecastPartial(w http.ResponseWriter, r *http.Request) {
@@ -874,17 +988,18 @@ func (s *Server) handleAPIForecast(w http.ResponseWriter, r *http.Request) {
 }
 
 type AccuracyData struct {
-	WUStats      *models.VerificationStats
-	BOMStats     *models.VerificationStats
-	UniqueDays   int
-	History      []VerificationRow
-	ChartLabels  []string
-	ChartWUMax   []float64
-	ChartWUMin   []float64
-	ChartBOMMax  []float64
-	ChartBOMMin  []float64
-	LeadTimeData []LeadTimeRow
-	RegimeStats  []RegimeRow
+	WUStats        *models.VerificationStats
+	BOMStats       *models.VerificationStats
+	CorrectedStats *store.CorrectedAccuracyStats
+	UniqueDays     int
+	History        []VerificationRow
+	ChartLabels    []string
+	ChartWUMax     []float64
+	ChartWUMin     []float64
+	ChartBOMMax    []float64
+	ChartBOMMin    []float64
+	LeadTimeData   []LeadTimeRow
+	RegimeStats    []RegimeRow
 }
 
 type VerificationRow struct {
@@ -1004,6 +1119,16 @@ func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
 				MAEMin:       sql.NullFloat64{Float64: b.MAEMin, Valid: true},
 			}
 			break
+		}
+	}
+
+	// Get corrected forecast accuracy stats
+	primaryStation, _ := s.store.GetPrimaryStation()
+	if primaryStation != nil {
+		if corrStats, err := s.store.GetCorrectedAccuracyStats(primaryStation.StationID, 30); err != nil {
+			log.Printf("get corrected accuracy stats: %v", err)
+		} else if corrStats.Count > 0 {
+			data.CorrectedStats = corrStats
 		}
 	}
 
