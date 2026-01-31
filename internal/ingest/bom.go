@@ -122,7 +122,7 @@ func (b *BOMClient) FetchForecasts() ([]models.Forecast, string, error) {
 			FetchedAt:     fetchedAt,
 			ValidDate:     validDate,
 			DayOfForecast: period.Index,
-			RawJSON:       string(body),
+			RawJSON:       "", // Don't store raw XML to save memory
 		}
 
 		for _, elem := range period.Elements {

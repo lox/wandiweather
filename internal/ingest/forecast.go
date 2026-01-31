@@ -95,7 +95,7 @@ func (f *ForecastClient) Fetch7Day() ([]models.Forecast, string, error) {
 			FetchedAt:     fetchedAt,
 			ValidDate:     validDate,
 			DayOfForecast: i,
-			RawJSON:       string(body),
+			RawJSON:       "", // Don't store raw JSON to save memory
 		}
 
 		if i < len(data.CalendarDayTempMax) {
