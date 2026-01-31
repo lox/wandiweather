@@ -10,6 +10,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"net/http/pprof"
 	"sort"
 	"strings"
 	"sync"
@@ -119,6 +120,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/history", s.handleAPIHistory)
 	mux.HandleFunc("/api/stations", s.handleAPIStations)
 	mux.HandleFunc("/api/forecast", s.handleAPIForecast)
+	// pprof endpoints for memory profiling
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/heap", pprof.Handler("heap").ServeHTTP)
+	mux.HandleFunc("/debug/pprof/goroutine", pprof.Handler("goroutine").ServeHTTP)
+	mux.HandleFunc("/debug/pprof/allocs", pprof.Handler("allocs").ServeHTTP)
 	return mux
 }
 
