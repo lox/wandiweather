@@ -718,17 +718,20 @@ func (s *Store) GetLatestForecasts() (map[string][]models.Forecast, error) {
 	today := time.Now().UTC().Format("2006-01-02")
 	// Get the most recent forecast with valid temp data for each source/date combination
 	// This ensures we don't lose earlier forecasts when a later fetch has NULL temps
+	// Note: explicitly list columns to avoid loading raw_json which can be large
 	rows, err := s.db.Query(`
 		WITH ranked AS (
-			SELECT f.*,
+			SELECT id, source, fetched_at, valid_date, day_of_forecast,
+			       temp_max, temp_min, precip_chance, precip_amount, precip_range,
+			       wind_speed, wind_dir, narrative,
 			       ROW_NUMBER() OVER (
-			           PARTITION BY f.source, SUBSTR(f.valid_date, 1, 10)
+			           PARTITION BY source, SUBSTR(valid_date, 1, 10)
 			           ORDER BY 
-			               CASE WHEN f.temp_max IS NOT NULL OR f.temp_min IS NOT NULL THEN 0 ELSE 1 END,
-			               f.fetched_at DESC
+			               CASE WHEN temp_max IS NOT NULL OR temp_min IS NOT NULL THEN 0 ELSE 1 END,
+			               fetched_at DESC
 			       ) as rn
-			FROM forecasts f
-			WHERE SUBSTR(f.valid_date, 1, 10) >= ?
+			FROM forecasts
+			WHERE SUBSTR(valid_date, 1, 10) >= ?
 		)
 		SELECT id, source, fetched_at, valid_date, day_of_forecast, 
 		       temp_max, temp_min, precip_chance, precip_amount, precip_range, 
