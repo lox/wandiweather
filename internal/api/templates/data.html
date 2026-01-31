@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Health - WandiWeather</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f1a;
+            color: #eee;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+        .container { max-width: 700px; margin: 0 auto; }
+        
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+        h1 { font-size: 1.25rem; font-weight: 600; }
+        .back { color: #4fc3f7; text-decoration: none; font-size: 0.9rem; }
+        .back:hover { text-decoration: underline; }
+        
+        .section-title {
+            font-size: 0.8rem;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.75rem;
+            margin-top: 1.5rem;
+        }
+        .section-title:first-of-type { margin-top: 0; }
+        
+        .card {
+            background: #1a1a2e;
+            border-radius: 10px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+        th, td {
+            padding: 0.5rem;
+            text-align: left;
+            border-bottom: 1px solid #2a2a4e;
+        }
+        th {
+            color: #888;
+            font-weight: 500;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+        }
+        tr:last-child td { border-bottom: none; }
+        
+        .ok { color: #4caf50; }
+        .warn { color: #ff9800; }
+        .error { color: #f44336; }
+        
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #2a2a4e;
+        }
+        .stat-row:last-child { border-bottom: none; }
+        .stat-label { color: #888; }
+        .stat-value { font-weight: 500; }
+        
+        .mono { font-family: 'SF Mono', Monaco, monospace; font-size: 0.8rem; }
+        
+        .badge {
+            display: inline-block;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 500;
+        }
+        .badge-ok { background: #1b4332; color: #4caf50; }
+        .badge-error { background: #4a1515; color: #f44336; }
+        .badge-warn { background: #4a3515; color: #ff9800; }
+        
+        .error-msg {
+            color: #f44336;
+            font-size: 0.75rem;
+            margin-top: 0.25rem;
+            word-break: break-all;
+        }
+        
+        .timestamp {
+            color: #666;
+            font-size: 0.75rem;
+        }
+        
+        .schema-version {
+            font-size: 2rem;
+            font-weight: 600;
+            color: #4fc3f7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 Data Health</h1>
+            <a href="/" class="back">← Back</a>
+        </header>
+
+        <div class="section-title">Schema & Storage</div>
+        <div class="card">
+            <div class="stat-row">
+                <span class="stat-label">Schema Version</span>
+                <span class="stat-value schema-version">v{{.SchemaVersion}}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Total Observations</span>
+                <span class="stat-value">{{.TotalObservations}}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Total Forecasts</span>
+                <span class="stat-value">{{.TotalForecasts}}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Raw Payloads Stored</span>
+                <span class="stat-value">{{.RawPayloadCount}} ({{.RawPayloadSizeKB}} KB)</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Database Size</span>
+                <span class="stat-value">{{printf "%.1f" .DatabaseSizeMB}} MB</span>
+            </div>
+        </div>
+
+        <div class="section-title">Ingest Health (Last 24h)</div>
+        <div class="card">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Source</th>
+                        <th>Endpoint</th>
+                        <th>Runs</th>
+                        <th>OK</th>
+                        <th>Failed</th>
+                        <th>Records</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .IngestHealth}}
+                    <tr>
+                        <td class="mono">{{.Source}}</td>
+                        <td class="mono">{{.Endpoint}}</td>
+                        <td>{{.TotalRuns}}</td>
+                        <td class="ok">{{.SuccessRuns}}</td>
+                        <td class="{{if gt .FailedRuns 0}}error{{else}}ok{{end}}">{{.FailedRuns}}</td>
+                        <td>{{.TotalRecords}}</td>
+                    </tr>
+                    {{else}}
+                    <tr><td colspan="6" style="color: #666;">No ingest runs in last 24h</td></tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section-title">Observation Types</div>
+        <div class="card">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Count</th>
+                        <th>%</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .ObsTypes}}
+                    <tr>
+                        <td class="mono">{{.Type}}</td>
+                        <td>{{.Count}}</td>
+                        <td>{{printf "%.1f" .Percent}}%</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section-title">Forecast Coverage</div>
+        <div class="card">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Source</th>
+                        <th>Location</th>
+                        <th>Count</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .ForecastCoverage}}
+                    <tr>
+                        <td class="mono">{{.Source}}</td>
+                        <td class="mono">{{.LocationID}}</td>
+                        <td>{{.Count}}</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        {{if .RecentErrors}}
+        <div class="section-title">Recent Errors</div>
+        <div class="card">
+            {{range .RecentErrors}}
+            <div style="padding: 0.5rem 0; border-bottom: 1px solid #2a2a4e;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span class="mono">{{.Source}}/{{.Endpoint}}</span>
+                    <span class="badge badge-error">FAILED</span>
+                </div>
+                <div class="timestamp">{{.StartedAt}}</div>
+                {{if .ErrorMessage}}
+                <div class="error-msg">{{.ErrorMessage}}</div>
+                {{end}}
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+
+        <div class="section-title">Data Quality</div>
+        <div class="card">
+            <div class="stat-row">
+                <span class="stat-label">Observations with Quality Flags</span>
+                <span class="stat-value {{if gt .ObsWithFlags 0}}warn{{else}}ok{{end}}">{{.ObsWithFlags}}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Clean Observations (ML-ready)</span>
+                <span class="stat-value ok">{{.CleanObservations}}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Parse Errors (24h)</span>
+                <span class="stat-value {{if gt .ParseErrors24h 0}}warn{{else}}ok{{end}}">{{.ParseErrors24h}}</span>
+            </div>
+        </div>
+
+        <p class="timestamp" style="text-align: center; margin-top: 1.5rem;">
+            Last updated: {{.UpdatedAt}}
+        </p>
+    </div>
+</body>
+</html>

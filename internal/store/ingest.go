@@ -93,7 +93,7 @@ type IngestHealthSummary struct {
 func (s *Store) GetIngestHealth(days int) ([]IngestHealthSummary, error) {
 	rows, err := s.db.Query(`
 		SELECT 
-			DATE(started_at) as date,
+			DATE(SUBSTR(started_at, 1, 19)) as date,
 			source,
 			endpoint,
 			COUNT(*) as total_runs,
@@ -102,7 +102,7 @@ func (s *Store) GetIngestHealth(days int) ([]IngestHealthSummary, error) {
 			COALESCE(SUM(records_stored), 0) as total_records,
 			COALESCE(SUM(parse_errors), 0) as total_parse_errors
 		FROM ingest_runs
-		WHERE started_at > DATE('now', '-' || ? || ' days')
+		WHERE SUBSTR(started_at, 1, 19) > datetime('now', '-' || ? || ' days')
 		GROUP BY date, source, endpoint
 		ORDER BY date DESC, source, endpoint
 	`, days)

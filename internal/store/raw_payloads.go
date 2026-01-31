@@ -183,3 +183,10 @@ func (s *Store) CleanupOldRawPayloads(retentionDays int) (int64, error) {
 	}
 	return result.RowsAffected()
 }
+
+// VacuumDatabase reclaims unused space from deleted records.
+// Should be run periodically (e.g., daily) after cleanup operations.
+func (s *Store) VacuumDatabase() error {
+	_, err := s.db.Exec("VACUUM")
+	return err
+}

@@ -39,7 +39,7 @@ fly ssh console -C "/app/wandiweather --db /data/wandiweather.db --daily"
 - `internal/ingest/forecast.go` - WU forecast fetching (`Fetch5Day`)
 - `internal/ingest/bom.go` - BOM forecast fetching via FTP
 - `internal/ingest/daily.go` - Daily jobs (summaries, verification, cleanup)
-- `internal/ingest/scheduler.go` - Polling scheduler with audit logging
+- `internal/ingest/scheduler.go` - Scheduler with cron-based forecast timing
 - `internal/forecast/` - Forecast correction (bias, regimes, nowcast)
 - `internal/store/` - SQLite storage and migrations
 - `internal/store/ingest.go` - Ingest audit trail (`ingest_runs` table)
@@ -51,8 +51,8 @@ fly ssh console -C "/app/wandiweather --db /data/wandiweather.db --daily"
 
 | Table | Purpose |
 |-------|---------|
-| `observations` | PWS readings with `obs_type` (instant/hourly_aggregate/unknown) |
-| `forecasts` | WU and BOM forecasts with `source` column |
+| `observations` | PWS readings with `obs_type` and `quality_flags` for ML filtering |
+| `forecasts` | WU and BOM forecasts with `source` and `location_id` |
 | `daily_summaries` | Computed daily stats with regime flags |
 | `forecast_verification` | Bias tracking per forecast |
 | `ingest_runs` | Audit trail for all API fetches |
@@ -62,10 +62,24 @@ fly ssh console -C "/app/wandiweather --db /data/wandiweather.db --daily"
 
 - Use stdlib where possible (net/http, html/template, database/sql)
 - Templates use HTMX for interactivity
-- Migrations are numbered in `internal/store/migrations.go` (currently v19)
+- Migrations are numbered in `internal/store/migrations.go` (currently v23)
 - Stations defined in `cmd/wandiweather/main.go`
 - All ingest operations log to `ingest_runs` for auditing
 - Raw API payloads stored compressed for ML training/debugging
+
+## Scheduling
+
+Forecast fetching uses `robfig/cron` for fixed-time collection (Melbourne timezone):
+
+| Time | Purpose |
+|------|---------|
+| 5am  | **Critical**: Captures full day-0 forecast with temp_min before sunrise |
+| 11am | Mid-morning update |
+| 5pm  | Evening update |
+| 11pm | Night update |
+| 6am  | Daily jobs (summaries, verification) |
+
+Observations poll every 5 minutes. Alerts poll every 5 minutes. Fire danger polls every 30 minutes.
 
 ## Data Collection (ML-Ready)
 
@@ -75,8 +89,10 @@ The system is designed for future ML-based forecast correction:
 2. **Raw Payloads**: Compressed JSON/XML stored for re-parsing if needed
 3. **Observation Types**: `obs_type` column distinguishes instant vs aggregated readings
 4. **Parse Errors**: Tracked separately from fatal errors for data quality monitoring
+5. **Location IDs**: Forecasts tagged with geocode (WU) or AAC code (BOM) for multi-location
+6. **Quality Flags**: Observations validated and flagged for out-of-range values
 
-See `docs/plans/ml-data-collection.md` for the full plan.
+See `docs/plans/ml-data-collection.md` for the full plan (Phases 1-6 complete).
 
 ## Environment
 

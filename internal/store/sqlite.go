@@ -57,16 +57,16 @@ func (s *Store) InsertObservation(obs models.Observation) error {
 		obsType = models.ObsTypeInstant
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO observations (station_id, observed_at, temp, humidity, dewpoint, pressure, wind_speed, wind_gust, wind_dir, precip_rate, precip_total, solar_radiation, uv, heat_index, wind_chill, qc_status, raw_json, obs_type, aggregation_period_minutes)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO observations (station_id, observed_at, temp, humidity, dewpoint, pressure, wind_speed, wind_gust, wind_dir, precip_rate, precip_total, solar_radiation, uv, heat_index, wind_chill, qc_status, raw_json, obs_type, aggregation_period_minutes, quality_flags)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(station_id, observed_at) DO NOTHING
-	`, obs.StationID, obs.ObservedAt, obs.Temp, obs.Humidity, obs.Dewpoint, obs.Pressure, obs.WindSpeed, obs.WindGust, obs.WindDir, obs.PrecipRate, obs.PrecipTotal, obs.SolarRadiation, obs.UV, obs.HeatIndex, obs.WindChill, obs.QCStatus, obs.RawJSON, obsType, obs.AggregationPeriod)
+	`, obs.StationID, obs.ObservedAt, obs.Temp, obs.Humidity, obs.Dewpoint, obs.Pressure, obs.WindSpeed, obs.WindGust, obs.WindDir, obs.PrecipRate, obs.PrecipTotal, obs.SolarRadiation, obs.UV, obs.HeatIndex, obs.WindChill, obs.QCStatus, obs.RawJSON, obsType, obs.AggregationPeriod, obs.QualityFlags)
 	return err
 }
 
 func (s *Store) GetLatestObservation(stationID string) (*models.Observation, error) {
 	row := s.db.QueryRow(`
-		SELECT id, station_id, observed_at, temp, humidity, dewpoint, pressure, wind_speed, wind_gust, wind_dir, precip_rate, precip_total, solar_radiation, uv, heat_index, wind_chill, qc_status, raw_json, created_at, obs_type, aggregation_period_minutes
+		SELECT id, station_id, observed_at, temp, humidity, dewpoint, pressure, wind_speed, wind_gust, wind_dir, precip_rate, precip_total, solar_radiation, uv, heat_index, wind_chill, qc_status, raw_json, created_at, obs_type, aggregation_period_minutes, quality_flags
 		FROM observations
 		WHERE station_id = ?
 		ORDER BY observed_at DESC
@@ -75,7 +75,7 @@ func (s *Store) GetLatestObservation(stationID string) (*models.Observation, err
 
 	var obs models.Observation
 	var obsType sql.NullString
-	err := row.Scan(&obs.ID, &obs.StationID, &obs.ObservedAt, &obs.Temp, &obs.Humidity, &obs.Dewpoint, &obs.Pressure, &obs.WindSpeed, &obs.WindGust, &obs.WindDir, &obs.PrecipRate, &obs.PrecipTotal, &obs.SolarRadiation, &obs.UV, &obs.HeatIndex, &obs.WindChill, &obs.QCStatus, &obs.RawJSON, &obs.CreatedAt, &obsType, &obs.AggregationPeriod)
+	err := row.Scan(&obs.ID, &obs.StationID, &obs.ObservedAt, &obs.Temp, &obs.Humidity, &obs.Dewpoint, &obs.Pressure, &obs.WindSpeed, &obs.WindGust, &obs.WindDir, &obs.PrecipRate, &obs.PrecipTotal, &obs.SolarRadiation, &obs.UV, &obs.HeatIndex, &obs.WindChill, &obs.QCStatus, &obs.RawJSON, &obs.CreatedAt, &obsType, &obs.AggregationPeriod, &obs.QualityFlags)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -88,7 +88,7 @@ func (s *Store) GetLatestObservation(stationID string) (*models.Observation, err
 
 func (s *Store) GetObservations(stationID string, start, end time.Time) ([]models.Observation, error) {
 	rows, err := s.db.Query(`
-		SELECT id, station_id, observed_at, temp, humidity, dewpoint, pressure, wind_speed, wind_gust, wind_dir, precip_rate, precip_total, solar_radiation, uv, heat_index, wind_chill, qc_status, raw_json, created_at, obs_type, aggregation_period_minutes
+		SELECT id, station_id, observed_at, temp, humidity, dewpoint, pressure, wind_speed, wind_gust, wind_dir, precip_rate, precip_total, solar_radiation, uv, heat_index, wind_chill, qc_status, raw_json, created_at, obs_type, aggregation_period_minutes, quality_flags
 		FROM observations
 		WHERE station_id = ? AND observed_at >= ? AND observed_at <= ?
 		ORDER BY observed_at ASC
@@ -102,7 +102,40 @@ func (s *Store) GetObservations(stationID string, start, end time.Time) ([]model
 	for rows.Next() {
 		var obs models.Observation
 		var obsType sql.NullString
-		if err := rows.Scan(&obs.ID, &obs.StationID, &obs.ObservedAt, &obs.Temp, &obs.Humidity, &obs.Dewpoint, &obs.Pressure, &obs.WindSpeed, &obs.WindGust, &obs.WindDir, &obs.PrecipRate, &obs.PrecipTotal, &obs.SolarRadiation, &obs.UV, &obs.HeatIndex, &obs.WindChill, &obs.QCStatus, &obs.RawJSON, &obs.CreatedAt, &obsType, &obs.AggregationPeriod); err != nil {
+		if err := rows.Scan(&obs.ID, &obs.StationID, &obs.ObservedAt, &obs.Temp, &obs.Humidity, &obs.Dewpoint, &obs.Pressure, &obs.WindSpeed, &obs.WindGust, &obs.WindDir, &obs.PrecipRate, &obs.PrecipTotal, &obs.SolarRadiation, &obs.UV, &obs.HeatIndex, &obs.WindChill, &obs.QCStatus, &obs.RawJSON, &obs.CreatedAt, &obsType, &obs.AggregationPeriod, &obs.QualityFlags); err != nil {
+			return nil, err
+		}
+		obs.ObsType = obsType.String
+		observations = append(observations, obs)
+	}
+	return observations, rows.Err()
+}
+
+// GetCleanObservations returns observations suitable for ML training:
+// - Good QC status (0 or 1)
+// - No quality flags set
+// - Known observation type (instant or hourly_aggregate)
+func (s *Store) GetCleanObservations(stationID string, start, end time.Time) ([]models.Observation, error) {
+	rows, err := s.db.Query(`
+		SELECT id, station_id, observed_at, temp, humidity, dewpoint, pressure, wind_speed, wind_gust, wind_dir, precip_rate, precip_total, solar_radiation, uv, heat_index, wind_chill, qc_status, raw_json, created_at, obs_type, aggregation_period_minutes, quality_flags
+		FROM observations
+		WHERE station_id = ?
+		  AND observed_at >= ? AND observed_at <= ?
+		  AND qc_status IN (0, 1)
+		  AND (quality_flags IS NULL OR quality_flags = '' OR quality_flags = '[]')
+		  AND obs_type IN ('instant', 'hourly_aggregate')
+		ORDER BY observed_at ASC
+	`, stationID, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var observations []models.Observation
+	for rows.Next() {
+		var obs models.Observation
+		var obsType sql.NullString
+		if err := rows.Scan(&obs.ID, &obs.StationID, &obs.ObservedAt, &obs.Temp, &obs.Humidity, &obs.Dewpoint, &obs.Pressure, &obs.WindSpeed, &obs.WindGust, &obs.WindDir, &obs.PrecipRate, &obs.PrecipTotal, &obs.SolarRadiation, &obs.UV, &obs.HeatIndex, &obs.WindChill, &obs.QCStatus, &obs.RawJSON, &obs.CreatedAt, &obsType, &obs.AggregationPeriod, &obs.QualityFlags); err != nil {
 			return nil, err
 		}
 		obs.ObsType = obsType.String
@@ -117,10 +150,10 @@ func (s *Store) InsertForecast(f models.Forecast) error {
 		source = "wu"
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO forecasts (source, fetched_at, valid_date, day_of_forecast, temp_max, temp_min, humidity, precip_chance, precip_amount, precip_range, wind_speed, wind_dir, narrative, raw_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO forecasts (source, fetched_at, valid_date, day_of_forecast, temp_max, temp_min, humidity, precip_chance, precip_amount, precip_range, wind_speed, wind_dir, narrative, raw_json, location_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source, fetched_at, valid_date) DO NOTHING
-	`, source, f.FetchedAt, f.ValidDate, f.DayOfForecast, f.TempMax, f.TempMin, f.Humidity, f.PrecipChance, f.PrecipAmount, f.PrecipRange, f.WindSpeed, f.WindDir, f.Narrative, f.RawJSON)
+	`, source, f.FetchedAt, f.ValidDate, f.DayOfForecast, f.TempMax, f.TempMin, f.Humidity, f.PrecipChance, f.PrecipAmount, f.PrecipRange, f.WindSpeed, f.WindDir, f.Narrative, f.RawJSON, f.LocationID)
 	return err
 }
 
@@ -1469,6 +1502,147 @@ func (s *Store) GetCorrectedVerificationHistory(stationID string, limit int) ([]
 		if err := rows.Scan(&r.ValidDate, &r.CorrectedTempMax, &r.CorrectedTempMin,
 			&r.ActualTempMax, &r.ActualTempMin, &r.BiasTempMax, &r.BiasTempMin); err != nil {
 			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+// DataHealthStats contains data quality metrics for the /data page.
+type DataHealthStats struct {
+	SchemaVersion     int
+	TotalObservations int64
+	TotalForecasts    int64
+	RawPayloadCount   int64
+	RawPayloadSizeKB  int64
+	ObsWithFlags      int64
+	CleanObservations int64
+	ParseErrors24h    int64
+	DatabaseSizeKB    int64
+}
+
+// GetDataHealthStats returns aggregated data quality metrics.
+func (s *Store) GetDataHealthStats() (*DataHealthStats, error) {
+	stats := &DataHealthStats{}
+
+	s.db.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&stats.SchemaVersion)
+	s.db.QueryRow("SELECT COUNT(*) FROM observations").Scan(&stats.TotalObservations)
+	s.db.QueryRow("SELECT COUNT(*) FROM forecasts").Scan(&stats.TotalForecasts)
+	s.db.QueryRow("SELECT COUNT(*), COALESCE(SUM(LENGTH(payload_compressed))/1024, 0) FROM raw_payloads").
+		Scan(&stats.RawPayloadCount, &stats.RawPayloadSizeKB)
+	s.db.QueryRow("SELECT COUNT(*) FROM observations WHERE quality_flags IS NOT NULL AND quality_flags != '' AND quality_flags != '[]'").
+		Scan(&stats.ObsWithFlags)
+	s.db.QueryRow(`SELECT COUNT(*) FROM observations 
+		WHERE qc_status IN (0, 1) 
+		AND (quality_flags IS NULL OR quality_flags = '' OR quality_flags = '[]')
+		AND obs_type IN ('instant', 'hourly_aggregate')`).
+		Scan(&stats.CleanObservations)
+	s.db.QueryRow("SELECT COALESCE(SUM(parse_errors), 0) FROM ingest_runs WHERE started_at > datetime('now', '-1 day')").
+		Scan(&stats.ParseErrors24h)
+
+	var pageCount, pageSize int64
+	s.db.QueryRow("PRAGMA page_count").Scan(&pageCount)
+	s.db.QueryRow("PRAGMA page_size").Scan(&pageSize)
+	stats.DatabaseSizeKB = (pageCount * pageSize) / 1024
+
+	return stats, nil
+}
+
+// ObsTypeCount represents observation type distribution.
+type ObsTypeCount struct {
+	Type    string
+	Count   int64
+	Percent float64
+}
+
+// GetObsTypeCounts returns observation counts by type.
+func (s *Store) GetObsTypeCounts() ([]ObsTypeCount, error) {
+	rows, err := s.db.Query(`
+		SELECT obs_type, COUNT(*) as cnt,
+			ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM observations), 2) as pct
+		FROM observations 
+		GROUP BY obs_type
+		ORDER BY cnt DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []ObsTypeCount
+	for rows.Next() {
+		var r ObsTypeCount
+		if err := rows.Scan(&r.Type, &r.Count, &r.Percent); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+// ForecastCoverage represents forecast counts by source and location.
+type ForecastCoverage struct {
+	Source     string
+	LocationID string
+	Count      int64
+}
+
+// GetForecastCoverage returns forecast counts by source and location.
+func (s *Store) GetForecastCoverage() ([]ForecastCoverage, error) {
+	rows, err := s.db.Query(`
+		SELECT source, COALESCE(location_id, 'unknown') as loc, COUNT(*)
+		FROM forecasts 
+		GROUP BY source, location_id
+		ORDER BY source, loc
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []ForecastCoverage
+	for rows.Next() {
+		var r ForecastCoverage
+		if err := rows.Scan(&r.Source, &r.LocationID, &r.Count); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+// RecentIngestError represents a failed ingest run for display.
+type RecentIngestError struct {
+	Source       string
+	Endpoint     string
+	StartedAt    string
+	ErrorMessage string
+}
+
+// GetRecentIngestErrorsForDisplay returns recent errors formatted for display.
+func (s *Store) GetRecentIngestErrorsForDisplay(limit int) ([]RecentIngestError, error) {
+	rows, err := s.db.Query(`
+		SELECT source, endpoint, started_at, COALESCE(error_message, '')
+		FROM ingest_runs
+		WHERE success = FALSE AND error_message IS NOT NULL AND error_message != ''
+		ORDER BY started_at DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []RecentIngestError
+	for rows.Next() {
+		var r RecentIngestError
+		var startedAt time.Time
+		if err := rows.Scan(&r.Source, &r.Endpoint, &startedAt, &r.ErrorMessage); err != nil {
+			return nil, err
+		}
+		r.StartedAt = startedAt.Format("Jan 2 15:04")
+		if len(r.ErrorMessage) > 200 {
+			r.ErrorMessage = r.ErrorMessage[:200] + "..."
 		}
 		results = append(results, r)
 	}

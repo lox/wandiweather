@@ -1,7 +1,7 @@
 # ML-Ready Data Collection Plan
 
 > **Created**: January 31, 2026  
-> **Status**: Phases 1-4 complete  
+> **Status**: Phases 1-6 complete (schema at v23)  
 > **Goal**: Make data collection "rock solid" for future ML-based forecast correction
 
 ## Overview
@@ -547,20 +547,26 @@ Update all callers.
 - [x] Update scheduler to log parse errors to audit trail
 - [x] Add `LogIngestHealth()` to daily jobs for health reporting
 
-### Phase 5: Location ID (Day 2)
-- [ ] Add `location_id` column to forecasts
-- [ ] Update forecast ingest to populate location
-- [ ] Backfill existing forecasts
+### Phase 5: Location ID (Day 2) ✓
+- [x] Add `location_id` column to forecasts (migration v20)
+- [x] Update forecast ingest to populate location (WU: geocode, BOM: AAC code)
+- [x] Backfill existing forecasts (WU: `-36.794,146.977`, BOM: `VIC_PT075`)
 
-### Phase 6: Data Quality Flags (Day 3)
-- [ ] Add `quality_flags` column to observations
-- [ ] Implement `validateObservation()`
-- [ ] Add validation to ingest pipeline
-- [ ] Create `GetCleanObservations()` helper
+### Phase 6: Data Quality Flags (Day 3) ✓
+- [x] Add `quality_flags` column to observations (migration v21)
+- [x] Implement `ValidateObservation()` in `internal/ingest/validate.go`
+- [x] Add validation to ingest pipeline (PWS current and history)
+- [x] Create `GetCleanObservations()` helper in store
 
 ### Phase 7: Naming Fix (Day 3) ✓
 - [x] Renamed `Fetch7Day` → `Fetch5Day` (done in Phase 1)
 - [x] All callers updated
+
+### Phase 8: Observation Type Inference (Day 3) ✓
+- [x] Migration v22 placeholder (timestamp format issue)
+- [x] Migration v23 to infer obs_type from timestamp patterns
+- [x] Hourly-aligned observations marked as `hourly_aggregate`
+- [x] Non-aligned observations marked as `instant`
 
 ---
 

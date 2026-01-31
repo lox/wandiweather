@@ -138,6 +138,7 @@ func (b *BOMClient) FetchForecasts() ([]models.Forecast, string, *FetchResult, e
 			ValidDate:     validDate,
 			DayOfForecast: period.Index,
 			RawJSON:       "", // Don't store raw XML to save memory
+			LocationID:    sql.NullString{String: b.areaCode, Valid: true},
 		}
 
 		for _, elem := range period.Elements {

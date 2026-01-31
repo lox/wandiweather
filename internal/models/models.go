@@ -41,6 +41,10 @@ type Observation struct {
 	// Values: "instant", "hourly_aggregate", "daily_aggregate", "unknown"
 	ObsType           string
 	AggregationPeriod sql.NullInt64 // Minutes: NULL for instant, 60 for hourly, 1440 for daily
+
+	// Quality flags for ML data filtering (Phase 6)
+	// JSON array of flag strings: ["temp_out_of_range", "humidity_invalid", etc.]
+	QualityFlags sql.NullString
 }
 
 // Observation type constants
@@ -67,6 +71,7 @@ type Forecast struct {
 	WindDir       sql.NullString
 	Narrative     sql.NullString
 	RawJSON       string
+	LocationID    sql.NullString // Geocode (WU) or AAC code (BOM)
 }
 
 type DailySummary struct {

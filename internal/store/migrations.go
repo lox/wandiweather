@@ -431,6 +431,64 @@ CREATE INDEX IF NOT EXISTS idx_observations_type ON observations(obs_type);
 ALTER TABLE ingest_runs ADD COLUMN parse_errors INTEGER DEFAULT 0;
 `,
 	},
+	{
+		Version:     20,
+		Description: "Add location_id to forecasts for multi-location ML training (Phase 5)",
+		SQL: `
+-- Add location_id column to forecasts
+ALTER TABLE forecasts ADD COLUMN location_id TEXT;
+
+-- For WU forecasts: use geocode format "-36.794,146.977" (Wandiligong)
+UPDATE forecasts SET location_id = '-36.794,146.977' WHERE source = 'wu' AND location_id IS NULL;
+
+-- For BOM forecasts: use AAC code "VIC_PT075" (Wangaratta area)
+UPDATE forecasts SET location_id = 'VIC_PT075' WHERE source = 'bom' AND location_id IS NULL;
+
+-- Index for location queries
+CREATE INDEX IF NOT EXISTS idx_forecasts_location ON forecasts(location_id, valid_date);
+`,
+	},
+	{
+		Version:     21,
+		Description: "Add quality_flags to observations for ML data filtering (Phase 6)",
+		SQL: `
+-- Add quality_flags column: JSON array of flag strings
+ALTER TABLE observations ADD COLUMN quality_flags TEXT;
+
+-- Index for filtering by quality
+CREATE INDEX IF NOT EXISTS idx_observations_quality ON observations(quality_flags);
+`,
+	},
+	{
+		Version:     22,
+		Description: "Infer observation types from timestamp patterns (data quality fix)",
+		SQL: `
+-- No-op: original approach didn't account for timestamp format
+-- Will be fixed in migration 23
+`,
+	},
+	{
+		Version:     23,
+		Description: "Fix observation types using timestamp substring matching",
+		SQL: `
+-- Observations stored as "2025-12-19 14:00:00 +0000 UTC" format
+-- Hourly observations from history endpoints have :00:00 at positions 12-19
+-- Using SUBSTR to extract the time portion before the timezone
+
+-- First, identify hourly-aligned timestamps (HH:00:00 pattern)
+-- The fetchHistory endpoint returns observations at hourly boundaries
+UPDATE observations 
+SET obs_type = 'hourly_aggregate', 
+    aggregation_period_minutes = 60
+WHERE obs_type = 'unknown' 
+  AND SUBSTR(observed_at, 15, 5) = '00:00';
+
+-- Remaining unknown observations are likely instant readings
+UPDATE observations 
+SET obs_type = 'instant'
+WHERE obs_type = 'unknown';
+`,
+	},
 }
 
 func (s *Store) Migrate() error {

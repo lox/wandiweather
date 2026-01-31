@@ -111,6 +111,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/accuracy", s.handleAccuracy)
+	mux.HandleFunc("/data", s.handleData)
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/weather-image", s.handleWeatherImage)
@@ -1322,6 +1323,70 @@ func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.tmpl.ExecuteTemplate(w, "accuracy.html", data)
+}
+
+type DataPageData struct {
+	SchemaVersion     int
+	TotalObservations int64
+	TotalForecasts    int64
+	RawPayloadCount   int64
+	RawPayloadSizeKB  int64
+	DatabaseSizeMB    float64
+	IngestHealth      []store.IngestHealthSummary
+	ObsTypes          []store.ObsTypeCount
+	ForecastCoverage  []store.ForecastCoverage
+	RecentErrors      []store.RecentIngestError
+	ObsWithFlags      int64
+	CleanObservations int64
+	ParseErrors24h    int64
+	UpdatedAt         string
+}
+
+func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
+	data := DataPageData{
+		UpdatedAt: time.Now().In(s.loc).Format("Jan 2, 3:04 PM"),
+	}
+
+	stats, err := s.store.GetDataHealthStats()
+	if err != nil {
+		log.Printf("get data health stats: %v", err)
+	} else {
+		data.SchemaVersion = stats.SchemaVersion
+		data.TotalObservations = stats.TotalObservations
+		data.TotalForecasts = stats.TotalForecasts
+		data.RawPayloadCount = stats.RawPayloadCount
+		data.RawPayloadSizeKB = stats.RawPayloadSizeKB
+		data.DatabaseSizeMB = float64(stats.DatabaseSizeKB) / 1024.0
+		data.ObsWithFlags = stats.ObsWithFlags
+		data.CleanObservations = stats.CleanObservations
+		data.ParseErrors24h = stats.ParseErrors24h
+	}
+
+	if health, err := s.store.GetIngestHealth(1); err != nil {
+		log.Printf("get ingest health: %v", err)
+	} else {
+		data.IngestHealth = health
+	}
+
+	if obsTypes, err := s.store.GetObsTypeCounts(); err != nil {
+		log.Printf("get obs types: %v", err)
+	} else {
+		data.ObsTypes = obsTypes
+	}
+
+	if coverage, err := s.store.GetForecastCoverage(); err != nil {
+		log.Printf("get forecast coverage: %v", err)
+	} else {
+		data.ForecastCoverage = coverage
+	}
+
+	if errors, err := s.store.GetRecentIngestErrorsForDisplay(5); err != nil {
+		log.Printf("get recent errors: %v", err)
+	} else {
+		data.RecentErrors = errors
+	}
+
+	s.tmpl.ExecuteTemplate(w, "data.html", data)
 }
 
 type HealthStatus struct {

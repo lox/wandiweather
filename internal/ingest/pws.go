@@ -156,6 +156,7 @@ func (p *PWS) FetchCurrent(stationID string) (*models.Observation, string, *Fetc
 		ObsType:    models.ObsTypeInstant,
 	}
 
+	// First populate all fields, then validate
 	if obs.Humidity != nil {
 		observation.Humidity = sql.NullInt64{Int64: int64(*obs.Humidity), Valid: true}
 	}
@@ -197,6 +198,12 @@ func (p *PWS) FetchCurrent(stationID string) (*models.Observation, string, *Fetc
 		if obs.Metric.WindChill != nil {
 			observation.WindChill = sql.NullFloat64{Float64: *obs.Metric.WindChill, Valid: true}
 		}
+	}
+
+	// Validate and set quality flags
+	flags := ValidateObservation(observation)
+	if len(flags) > 0 {
+		observation.QualityFlags = sql.NullString{String: QualityFlagsToJSON(flags), Valid: true}
 	}
 
 	return observation, string(body), result, nil
@@ -361,6 +368,12 @@ func (p *PWS) fetchHistory(stationID, endpoint string) ([]models.Observation, er
 			if obs.Metric.WindchillAvg != nil {
 				result.WindChill = sql.NullFloat64{Float64: *obs.Metric.WindchillAvg, Valid: true}
 			}
+		}
+
+		// Validate and set quality flags
+		flags := ValidateObservation(&result)
+		if len(flags) > 0 {
+			result.QualityFlags = sql.NullString{String: QualityFlagsToJSON(flags), Valid: true}
 		}
 
 		results = append(results, result)

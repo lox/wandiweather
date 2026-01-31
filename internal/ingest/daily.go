@@ -48,6 +48,12 @@ func (d *DailyJobs) RunAll(forDate time.Time) error {
 		log.Printf("daily: cleaned up %d old raw payloads (>%d days)", deleted, rawPayloadRetentionDays)
 	}
 
+	if err := d.store.VacuumDatabase(); err != nil {
+		log.Printf("daily: vacuum database error: %v", err)
+	} else {
+		log.Println("daily: database vacuumed")
+	}
+
 	d.LogIngestHealth()
 
 	if len(errs) > 0 {

@@ -14,6 +14,7 @@ import (
 	"github.com/lox/wandiweather/internal/imagegen"
 	"github.com/lox/wandiweather/internal/models"
 	"github.com/lox/wandiweather/internal/store"
+	"github.com/robfig/cron/v3"
 )
 
 type Scheduler struct {
@@ -25,12 +26,12 @@ type Scheduler struct {
 	stationIDs       []string
 	loc              *time.Location
 	obsInterval      time.Duration
-	fcInterval       time.Duration
 	imageGen         *imagegen.Generator
 	imageCache       *imagegen.Cache
 	imageGenMu       *sync.Mutex // Shared with server to prevent duplicate API calls
 	emergencyClient  *emergency.Client
 	fireDangerClient *firedanger.Client
+	cron             *cron.Cron
 }
 
 func NewScheduler(store *store.Store, pws *PWS, forecast *ForecastClient, stationIDs []string, loc *time.Location) *Scheduler {
@@ -42,8 +43,7 @@ func NewScheduler(store *store.Store, pws *PWS, forecast *ForecastClient, statio
 		daily:           NewDailyJobs(store),
 		stationIDs:      stationIDs,
 		loc:             loc,
-		obsInterval:     10 * time.Minute,
-		fcInterval:      6 * time.Hour,
+		obsInterval:     5 * time.Minute,
 		emergencyClient: nil, // Set via SetEmergencyClient
 	}
 }
@@ -67,56 +67,75 @@ func (s *Scheduler) SetImageGenerator(gen *imagegen.Generator, cache *imagegen.C
 }
 
 func (s *Scheduler) Run(ctx context.Context) {
+	// Initial ingestion on startup
 	s.ingestObservations()
 	s.ingestForecasts()
 	s.ingestAlerts()
 	s.ingestFireDanger()
-	s.runDailyJobsIfNeeded()
 	s.checkWeatherImage()
 
+	// Set up cron scheduler for fixed-time forecast fetching
+	// Times are in Melbourne timezone (AEDT/AEST)
+	// 5am: Critical - captures full day-0 forecast with temp_min before sunrise
+	// 11am, 5pm, 11pm: Regular updates throughout the day
+	s.cron = cron.New(cron.WithLocation(s.loc))
+
+	s.cron.AddFunc("0 5 * * *", func() {
+		log.Println("scheduler: 5am forecast fetch (pre-dawn)")
+		s.ingestForecasts()
+	})
+	s.cron.AddFunc("0 11 * * *", func() {
+		log.Println("scheduler: 11am forecast fetch")
+		s.ingestForecasts()
+	})
+	s.cron.AddFunc("0 17 * * *", func() {
+		log.Println("scheduler: 5pm forecast fetch")
+		s.ingestForecasts()
+	})
+	s.cron.AddFunc("0 23 * * *", func() {
+		log.Println("scheduler: 11pm forecast fetch")
+		s.ingestForecasts()
+	})
+
+	// Daily jobs at 6am
+	s.cron.AddFunc("0 6 * * *", func() {
+		log.Println("scheduler: 6am daily jobs")
+		yesterday := time.Now().In(s.loc).AddDate(0, 0, -1)
+		s.daily.RunAll(yesterday)
+	})
+
+	s.cron.Start()
+	log.Println("scheduler: cron started (forecasts at 5am, 11am, 5pm, 11pm Melbourne time)")
+
+	// Interval-based tickers for frequent polling
 	obsTicker := time.NewTicker(s.obsInterval)
-	fcTicker := time.NewTicker(s.fcInterval)
-	alertTicker := time.NewTicker(5 * time.Minute)  // Poll alerts every 5 mins
-	fdrTicker := time.NewTicker(30 * time.Minute)   // Poll fire danger every 30 mins (updates twice daily)
-	dailyTicker := time.NewTicker(1 * time.Hour)
-	imageTicker := time.NewTicker(1 * time.Hour)    // Check hourly for time-of-day transitions
+	alertTicker := time.NewTicker(5 * time.Minute)
+	fdrTicker := time.NewTicker(30 * time.Minute)
+	imageTicker := time.NewTicker(1 * time.Hour)
 	defer obsTicker.Stop()
-	defer fcTicker.Stop()
 	defer alertTicker.Stop()
 	defer fdrTicker.Stop()
-	defer dailyTicker.Stop()
 	defer imageTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			log.Println("scheduler: shutting down")
+			s.cron.Stop()
 			return
 		case <-obsTicker.C:
 			s.ingestObservations()
-		case <-fcTicker.C:
-			s.ingestForecasts()
 		case <-alertTicker.C:
 			s.ingestAlerts()
 		case <-fdrTicker.C:
 			s.ingestFireDanger()
-		case <-dailyTicker.C:
-			s.runDailyJobsIfNeeded()
 		case <-imageTicker.C:
 			s.checkWeatherImage()
 		}
 	}
 }
 
-func (s *Scheduler) runDailyJobsIfNeeded() {
-	now := time.Now()
-	localNow := now.In(s.loc)
 
-	if localNow.Hour() >= 6 && localNow.Hour() < 7 {
-		yesterday := localNow.AddDate(0, 0, -1)
-		s.daily.RunAll(yesterday)
-	}
-}
 
 func (s *Scheduler) ingestForecasts() {
 	if s.forecast == nil {

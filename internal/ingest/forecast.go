@@ -52,6 +52,7 @@ type Daypart struct {
 }
 
 func (f *ForecastClient) Fetch5Day() ([]models.Forecast, string, *FetchResult, error) {
+	geocode := fmt.Sprintf("%.3f,%.3f", f.lat, f.lon)
 	url := fmt.Sprintf("https://api.weather.com/v3/wx/forecast/daily/5day?geocode=%.4f,%.4f&format=json&units=m&language=en-AU&apiKey=%s", f.lat, f.lon, f.apiKey)
 	result := &FetchResult{}
 
@@ -107,6 +108,7 @@ func (f *ForecastClient) Fetch5Day() ([]models.Forecast, string, *FetchResult, e
 			ValidDate:     validDate,
 			DayOfForecast: i,
 			RawJSON:       "", // Don't store raw JSON to save memory
+			LocationID:    sql.NullString{String: geocode, Valid: true},
 		}
 
 		if i < len(data.CalendarDayTempMax) {
