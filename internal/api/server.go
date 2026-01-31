@@ -516,6 +516,15 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 				exp.MaxFinal = tf.TempMax
 			}
 
+			// After ~3 PM local time, if temp is falling, just use observed max
+			// The day's max has likely already occurred
+			hour := now.Hour()
+			isFalling := data.TempChangeRate != nil && *data.TempChangeRate < -0.5
+			if hour >= 15 && isFalling && data.TodayStats != nil && data.TodayStats.MaxTemp > 0 {
+				tf.TempMax = math.Round(data.TodayStats.MaxTemp)
+				exp.MaxFinal = tf.TempMax
+			}
+
 			// Sanity check: if the corrected forecast exceeds both the raw forecast
 			// AND the observed max by more than 3°C, the correction is likely wrong.
 			// In this case, prefer the higher of raw forecast or observed max.
