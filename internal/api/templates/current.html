@@ -74,19 +74,37 @@
             <span class="explain-label">High:</span>
             <span class="explain-value">
                 {{printf "%.0f" .TodayForecast.Explanation.MaxRaw}}° ({{.TodayForecast.Explanation.MaxSource | upper}})
-                {{if ne .TodayForecast.Explanation.MaxBiasApplied 0.0}} → {{printf "%+.1f" (neg .TodayForecast.Explanation.MaxBiasApplied)}}° bias{{end}}
+                {{if ne .TodayForecast.Explanation.MaxBiasApplied 0.0}} → {{printf "%+.1f" (neg .TodayForecast.Explanation.MaxBiasApplied)}}° correction{{end}}
                 {{if .TodayForecast.NowcastApplied}} → {{printf "%+.1f" .TodayForecast.Explanation.MaxNowcast}}° nowcast{{end}}
                 = <strong>{{printf "%.0f" .TodayForecast.Explanation.MaxFinal}}°</strong>
             </span>
         </div>
+        {{if ge .TodayForecast.Explanation.MaxBiasDayUsed 0}}
+        <div class="explain-detail">
+            Correction based on {{.TodayForecast.Explanation.MaxBiasSamples}} days of local data{{if .TodayForecast.Explanation.MaxBiasFallback}} (using day-{{.TodayForecast.Explanation.MaxBiasDayUsed}} stats){{end}}
+        </div>
+        {{else}}
+        <div class="explain-detail explain-warning">
+            No correction applied (insufficient data)
+        </div>
+        {{end}}
         <div class="explain-row">
             <span class="explain-label">Low:</span>
             <span class="explain-value">
                 {{printf "%.0f" .TodayForecast.Explanation.MinRaw}}° ({{.TodayForecast.Explanation.MinSource | upper}})
-                {{if ne .TodayForecast.Explanation.MinBiasApplied 0.0}} → {{printf "%+.1f" (neg .TodayForecast.Explanation.MinBiasApplied)}}° bias{{end}}
+                {{if ne .TodayForecast.Explanation.MinBiasApplied 0.0}} → {{printf "%+.1f" (neg .TodayForecast.Explanation.MinBiasApplied)}}° correction{{end}}
                 = <strong>{{printf "%.0f" .TodayForecast.Explanation.MinFinal}}°</strong>
             </span>
         </div>
+        {{if ge .TodayForecast.Explanation.MinBiasDayUsed 0}}
+        <div class="explain-detail">
+            Correction based on {{.TodayForecast.Explanation.MinBiasSamples}} days of local data{{if .TodayForecast.Explanation.MinBiasFallback}} (using day-{{.TodayForecast.Explanation.MinBiasDayUsed}} stats){{end}}
+        </div>
+        {{else}}
+        <div class="explain-detail explain-warning">
+            No correction applied (insufficient data)
+        </div>
+        {{end}}
     </div>
     {{if .TodayStats}}
     <div class="observed-progress">

@@ -7,7 +7,8 @@ import (
 )
 
 const (
-	maxBiasCorrection   = 8.0
+	// MaxBiasCorrection is the maximum bias correction to apply (exported for consistency across packages)
+	MaxBiasCorrection   = 6.0
 	maxTotalCorrection  = 10.0
 	minRegimeSamples    = 15
 	minBiasSamples      = 7
@@ -75,7 +76,7 @@ func (c *BiasCorrector) GetCorrectionForRegime(source string, target string, day
 	if regime != "all" && regime != "" {
 		stats, err := c.store.GetCorrectionStatsForRegime(source, target, dayOfForecast, regime)
 		if err == nil && stats != nil && stats.SampleSize >= minRegimeSamples {
-			return capCorrection(stats.MeanBias, maxBiasCorrection)
+			return capCorrection(stats.MeanBias, MaxBiasCorrection)
 		}
 	}
 
@@ -86,7 +87,7 @@ func (c *BiasCorrector) GetCorrectionForRegime(source string, target string, day
 	if stats.SampleSize < minBiasSamples {
 		return 0
 	}
-	return capCorrection(stats.MeanBias, maxBiasCorrection)
+	return capCorrection(stats.MeanBias, MaxBiasCorrection)
 }
 
 func capCorrection(correction float64, limit float64) float64 {
