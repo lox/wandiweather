@@ -426,8 +426,27 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 			tf := &TodayForecast{}
 			exp := &tf.Explanation
 
-			// MAX TEMP: prefer BOM (better accuracy)
-			if bomForecast != nil && bomForecast.TempMax.Valid {
+			// Get current temp for sanity checking
+			var currentTemp float64
+			var hasCurrentTemp bool
+			if data.Primary != nil && data.Primary.Temp.Valid {
+				currentTemp = data.Primary.Temp.Float64
+				hasCurrentTemp = true
+			}
+
+			// MAX TEMP: prefer BOM (better accuracy), but fall back to WU if BOM is unreasonable
+			// "Unreasonable" = current temp already exceeds BOM forecast by >3°C, or BOM differs from WU by >10°C
+			useBOMMax := bomForecast != nil && bomForecast.TempMax.Valid
+			if useBOMMax && hasCurrentTemp && currentTemp > bomForecast.TempMax.Float64+3 {
+				useBOMMax = false // Current temp already exceeds BOM forecast
+			}
+			if useBOMMax && wuForecast != nil && wuForecast.TempMax.Valid {
+				if wuForecast.TempMax.Float64-bomForecast.TempMax.Float64 > 10 {
+					useBOMMax = false // WU and BOM differ by more than 10°C, BOM likely wrong
+				}
+			}
+
+			if useBOMMax {
 				exp.MaxSource = "bom"
 				exp.MaxRaw = bomForecast.TempMax.Float64
 				tf.TempMax = bomForecast.TempMax.Float64
