@@ -39,6 +39,7 @@ type Server struct {
 	imageGen        *imagegen.Generator
 	genMu           sync.Mutex // Prevents concurrent generation of same image
 	emergencyClient *emergency.Client
+	ogImageCache    *imagegen.OGImageCache
 }
 
 func NewServer(store *store.Store, port string, loc *time.Location) *Server {
@@ -81,6 +82,7 @@ func NewServer(store *store.Store, port string, loc *time.Location) *Server {
 		imageCache:      imagegen.NewCache("data/images"),
 		imageGen:        imageGen,
 		emergencyClient: emergencyClient,
+		ogImageCache:    imagegen.NewOGImageCache(5 * time.Minute),
 	}
 }
 
@@ -113,6 +115,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/weather-image", s.handleWeatherImage)
 	mux.HandleFunc("/weather-image/", s.handleWeatherImage)
+	mux.HandleFunc("/og-image", s.handleOGImage)
 	mux.HandleFunc("/partials/current", s.handleCurrentPartial)
 	mux.HandleFunc("/partials/chart", s.handleChartPartial)
 	mux.HandleFunc("/partials/forecast", s.handleForecastPartial)
@@ -1569,6 +1572,111 @@ func (s *Server) serveBannerImage(w http.ResponseWriter, data []byte) {
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	w.Write(data)
+}
+
+// handleOGImage serves a dynamic Open Graph image for social media sharing.
+// It composites the current weather image with temperature and condition text.
+func (s *Server) handleOGImage(w http.ResponseWriter, r *http.Request) {
+	// Check cache first
+	if data, ok := s.ogImageCache.Get(); ok {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		w.Write(data)
+		return
+	}
+
+	// Get current weather data
+	currentData, err := s.getCurrentData()
+	if err != nil {
+		log.Printf("og-image: failed to get current data: %v", err)
+		http.Error(w, "Failed to get weather data", http.StatusInternalServerError)
+		return
+	}
+
+	// Build OG image data
+	ogData := imagegen.OGImageData{}
+	if currentData.Primary != nil && currentData.Primary.Temp.Valid {
+		ogData.Temperature = currentData.Primary.Temp.Float64
+	}
+
+	// Get condition description from today's forecast narrative or derive from condition
+	if currentData.TodayForecast != nil && currentData.TodayForecast.Narrative != "" {
+		// Extract first sentence or use a simplified version
+		narrative := currentData.TodayForecast.Narrative
+		if len(narrative) > 30 {
+			// Find first period or truncate
+			for i, c := range narrative {
+				if c == '.' && i > 10 {
+					narrative = narrative[:i]
+					break
+				}
+			}
+		}
+		ogData.Condition = narrative
+	} else {
+		// Fall back to condition name
+		condition := s.getCurrentCondition()
+		ogData.Condition = conditionToReadable(condition)
+	}
+
+	// Get current weather image
+	loc := s.loc
+	now := time.Now().In(loc)
+	tod := forecast.GetTimeOfDay(now)
+	baseCondition := s.getCurrentCondition()
+	condition := forecast.ConditionWithTime(baseCondition, tod)
+
+	var ogImage []byte
+
+	if weatherImage, ok := s.imageCache.Get(condition); ok {
+		ogImage, err = imagegen.GenerateOGImage(weatherImage, ogData)
+	} else if weatherImage, ok := s.imageCache.GetAny(); ok {
+		ogImage, err = imagegen.GenerateOGImage(weatherImage, ogData)
+	} else {
+		// No weather image available - generate fallback
+		ogImage, err = imagegen.GenerateFallbackOGImage(ogData)
+	}
+
+	if err != nil {
+		log.Printf("og-image: failed to generate: %v", err)
+		http.Error(w, "Failed to generate OG image", http.StatusInternalServerError)
+		return
+	}
+
+	// Cache the result
+	s.ogImageCache.Set(ogImage)
+
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.Write(ogImage)
+}
+
+// conditionToReadable converts a weather condition to a human-readable string.
+func conditionToReadable(condition forecast.WeatherCondition) string {
+	switch condition {
+	case forecast.ConditionClearWarm:
+		return "Clear & Warm"
+	case forecast.ConditionClearCool:
+		return "Clear & Cool"
+	case forecast.ConditionPartlyCloudy:
+		return "Partly Cloudy"
+	case forecast.ConditionMostlyCloudy:
+		return "Mostly Cloudy"
+	case forecast.ConditionLightRain:
+		return "Light Rain"
+	case forecast.ConditionHeavyRain:
+		return "Heavy Rain"
+	case forecast.ConditionStorm:
+		return "Stormy"
+	case forecast.ConditionFog:
+		return "Foggy"
+	case forecast.ConditionHot:
+		return "Hot"
+	case forecast.ConditionFrost:
+		return "Frosty"
+	default:
+		return ""
+	}
 }
 
 func (s *Server) generateAndCache(baseCondition forecast.WeatherCondition, tod forecast.TimeOfDay, t time.Time) {
