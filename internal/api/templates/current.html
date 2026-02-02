@@ -58,7 +58,7 @@
             <span class="range-label">Low</span>
         </div>
         <div class="range-item">
-            <span class="range-value high">{{if and .TodayForecast.NowcastApplied (ne .TodayForecast.TempMaxRaw .TodayForecast.TempMax)}}<span class="revised-from" title="Revised based on morning observations">{{printf "%.0f" .TodayForecast.TempMaxRaw}}°</span>{{end}}{{printf "%.0f" .TodayForecast.TempMax}}°</span>
+            <span class="range-value high">{{if and .TodayForecast.NowcastApplied (ne .TodayForecast.TempMaxPreNowcast .TodayForecast.TempMax)}}<span class="revised-from" title="Revised based on morning observations">{{printf "%.0f" .TodayForecast.TempMaxPreNowcast}}°</span>{{end}}{{printf "%.0f" .TodayForecast.TempMax}}°</span>
             <span class="range-label">High</span>
         </div>
         {{if .TodayForecast.HasPrecip}}

@@ -1,7 +1,7 @@
 # API Server Refactoring Plan
 
 > **Created**: February 2, 2026  
-> **Status**: Phase 1 complete ✅  
+> **Status**: Phase 2 complete ✅  
 > **Goal**: Split `internal/api/server.go` into smaller, testable components
 
 ## Overview
@@ -43,8 +43,6 @@ Split `server.go` into multiple files within the same package:
 | `templates.go` | Template funcs (deref, abs, neg, upper) + parsing |
 | `current_data.go` | getCurrentData() and related helpers |
 | `forecast_data.go` | getForecastData() and related helpers |
-| `bias.go` | getCorrectionBias, getCorrectionBiasWithFallback, BiasResult |
-| `todaytemps.go` | computeTodayTemps, TodayTempInput, TodayTempResult |
 
 **Benefits**:
 - Immediate navigability improvement
@@ -53,7 +51,7 @@ Split `server.go` into multiple files within the same package:
 
 ---
 
-### Phase 2: Extract forecast math to `internal/forecast`
+### Phase 2: Extract forecast math to `internal/forecast` ✅ Complete
 **Effort**: S (< 2 hours)  
 **Risk**: Low
 
@@ -61,16 +59,18 @@ Move pure forecast calculation logic to `internal/forecast`:
 
 ```
 internal/forecast/
-├── bias.go          # BiasCorrector (existing)
-├── nowcast.go       # Nowcaster (existing)
-├── todaytemps.go    # NEW: computeTodayTemps, TodayTempInput, TodayTempResult
-└── todaytemps_test.go # NEW: Table-driven tests
+├── correction.go      # BiasCorrector (existing)
+├── nowcast.go         # Nowcaster (existing)
+├── todaytemps.go      # ComputeTodayTemps, LookupBias, LookupBiasWithFallback
+└── todaytemps_test.go # Table-driven tests (20 cases)
 ```
 
 **Key changes**:
-- `computeTodayTemps()` becomes `forecast.ComputeTodayTemps()`
-- Function takes all inputs as parameters (pure function, no DB calls)
+- `computeTodayTemps()` → `forecast.ComputeTodayTemps()`
+- `getCorrectionBiasWithFallback()` → `forecast.LookupBiasWithFallback()`
+- All functions take inputs as parameters (pure functions, no DB calls)
 - Easy to unit test with table tests
+- `api` package calls `forecast` directly (no wrapper files)
 
 **Example test structure**:
 ```go
@@ -224,13 +224,15 @@ type Renderer interface {
 - [x] No functional changes (same behavior)
 
 ### Phase 2 Complete When:
-- [ ] `computeTodayTemps` lives in `internal/forecast`
-- [ ] Table-driven tests cover key scenarios
-- [ ] 90%+ test coverage on temperature logic
+- [x] `computeTodayTemps` lives in `internal/forecast` → `forecast.ComputeTodayTemps`
+- [x] `getCorrectionBiasWithFallback` lives in `internal/forecast` → `forecast.LookupBiasWithFallback`
+- [x] Table-driven tests cover key scenarios (20 test cases)
+- [x] ~80% test coverage on `ComputeTodayTemps`, 88% on `LookupBiasWithFallback`
+- [x] Bug fixes: symmetric BOM/WU diff check, proper observed temp validity flags
 
 ---
 
-## File Size Results
+## File Size Results (internal/api)
 
 | File | Target Lines | Actual Lines |
 |------|--------------|--------------|
@@ -240,10 +242,15 @@ type Renderer interface {
 | handlers_images.go | ~150 | 283 |
 | current_data.go | ~400 | 351 ✅ |
 | forecast_data.go | ~300 | 288 ✅ |
-| viewmodels.go | ~200 | 233 ✅ |
-| todaytemps.go | ~200 | 200 ✅ |
-| bias.go | — | 80 |
+| viewmodels.go | ~200 | 216 ✅ |
 | templates.go | — | 33 |
+
+## File Size Results (internal/forecast, new)
+
+| File | Lines |
+|------|-------|
+| todaytemps.go | 289 |
+| todaytemps_test.go | 340 |
 
 ---
 

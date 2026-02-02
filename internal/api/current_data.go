@@ -105,9 +105,11 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 		ts := &TodayStats{}
 		if todayStats.MinTemp.Valid {
 			ts.MinTemp = todayStats.MinTemp.Float64
+			ts.MinTempValid = true
 		}
 		if todayStats.MaxTemp.Valid {
 			ts.MaxTemp = todayStats.MaxTemp.Float64
+			ts.MaxTempValid = true
 		}
 		if todayStats.MinTempTime.Valid {
 			ts.MinTempTime = todayStats.MinTempTime.Time.In(loc).Format("3:04 PM")
@@ -189,12 +191,12 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 			var observedMaxValid, observedMinValid bool
 			if data.TodayStats != nil {
 				observedMax = data.TodayStats.MaxTemp
-				observedMaxValid = observedMax > 0 || data.TodayStats.MinTemp > 0 // proxy for valid
+				observedMaxValid = data.TodayStats.MaxTempValid
 				observedMin = data.TodayStats.MinTemp
-				observedMinValid = true
+				observedMinValid = data.TodayStats.MinTempValid
 			}
 
-			tempInput := TodayTempInput{
+			tempInput := forecast.TodayTempInput{
 				WUForecast:       wuForecast,
 				BOMForecast:      bomForecast,
 				CorrectionStats:  correctionStats,
@@ -212,12 +214,12 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 				LogNowcast:       true, // Log nowcast for the main display
 			}
 
-			tempResult := computeTodayTemps(tempInput)
+			tempResult := forecast.ComputeTodayTemps(tempInput)
 
 			tf := &TodayForecast{
 				TempMax:           tempResult.TempMax,
 				TempMin:           tempResult.TempMin,
-				TempMaxRaw:        tempResult.TempMaxRaw,
+				TempMaxPreNowcast: tempResult.TempMaxPreNowcast,
 				NowcastApplied:    tempResult.NowcastApplied,
 				NowcastAdjustment: tempResult.NowcastAdjustment,
 				Explanation:       tempResult.Explanation,

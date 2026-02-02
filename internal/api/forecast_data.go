@@ -47,13 +47,13 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 		dayMap[key].WU = &f
 
 		if fc.TempMax.Valid {
-			if bias := getCorrectionBias(correctionStats, "wu", "tmax", fc.DayOfForecast); bias != 0 {
+			if bias := forecast.LookupBias(correctionStats, "wu", "tmax", fc.DayOfForecast); bias != 0 {
 				corrected := fc.TempMax.Float64 - bias
 				dayMap[key].WUCorrectedMax = &corrected
 			}
 		}
 		if fc.TempMin.Valid {
-			if bias := getCorrectionBias(correctionStats, "wu", "tmin", fc.DayOfForecast); bias != 0 {
+			if bias := forecast.LookupBias(correctionStats, "wu", "tmin", fc.DayOfForecast); bias != 0 {
 				corrected := fc.TempMin.Float64 - bias
 				dayMap[key].WUCorrectedMin = &corrected
 			}
@@ -74,13 +74,13 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 		dayMap[key].BOM = &f
 
 		if fc.TempMax.Valid {
-			if bias := getCorrectionBias(correctionStats, "bom", "tmax", fc.DayOfForecast); bias != 0 {
+			if bias := forecast.LookupBias(correctionStats, "bom", "tmax", fc.DayOfForecast); bias != 0 {
 				corrected := fc.TempMax.Float64 - bias
 				dayMap[key].BOMCorrectedMax = &corrected
 			}
 		}
 		if fc.TempMin.Valid {
-			if bias := getCorrectionBias(correctionStats, "bom", "tmin", fc.DayOfForecast); bias != 0 {
+			if bias := forecast.LookupBias(correctionStats, "bom", "tmin", fc.DayOfForecast); bias != 0 {
 				corrected := fc.TempMin.Float64 - bias
 				dayMap[key].BOMCorrectedMin = &corrected
 			}
@@ -129,7 +129,7 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 		if day, ok := dayMap[key]; ok {
 			if day.IsToday && primaryStationID != "" {
 				// Use shared helper for consistent temperature computation
-				tempInput := TodayTempInput{
+				tempInput := forecast.TodayTempInput{
 					WUForecast:       day.WU,
 					BOMForecast:      day.BOM,
 					CorrectionStats:  correctionStats,
@@ -147,7 +147,7 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 					LogNowcast:       false, // Don't log again, main display already logged
 				}
 
-				tempResult := computeTodayTemps(tempInput)
+				tempResult := forecast.ComputeTodayTemps(tempInput)
 
 				if tempResult.HaveMax {
 					day.DisplayMax = &tempResult.TempMax

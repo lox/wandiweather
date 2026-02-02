@@ -49,46 +49,29 @@ type IndexData struct {
 type TodayForecast struct {
 	TempMax           float64
 	TempMin           float64
-	TempMaxRaw        float64
+	TempMaxPreNowcast float64 // max temp before nowcast adjustment (for UI "revised from" display)
 	NowcastApplied    bool
 	NowcastAdjustment float64
 	PrecipChance      int64
 	PrecipAmount      float64
 	Narrative         string
 	HasPrecip         bool
-	Explanation       ForecastExplanation
-}
-
-// ForecastExplanation tracks how the forecast was calculated.
-type ForecastExplanation struct {
-	MaxSource       string  // "bom" or "wu"
-	MaxRaw          float64 // raw forecast value
-	MaxBiasApplied  float64 // bias correction applied
-	MaxBiasDayUsed  int     // which day's bias was used (-1 if none)
-	MaxBiasSamples  int     // how many samples the bias is based on
-	MaxBiasFallback bool    // true if fallback day was used
-	MaxNowcast      float64 // nowcast adjustment (if any)
-	MaxFinal        float64 // final displayed value
-	MinSource       string
-	MinRaw          float64
-	MinBiasApplied  float64
-	MinBiasDayUsed  int  // which day's bias was used (-1 if none)
-	MinBiasSamples  int  // how many samples the bias is based on
-	MinBiasFallback bool // true if fallback day was used
-	MinFinal        float64
+	Explanation       forecast.TempExplanation
 }
 
 // TodayStats contains observed statistics for today.
 type TodayStats struct {
-	MinTemp     float64
-	MaxTemp     float64
-	MinTempTime string
-	MaxTempTime string
-	RainTotal   float64
-	HasRain     bool
-	MaxWind     float64
-	MaxGust     float64
-	HasWind     bool
+	MinTemp      float64
+	MaxTemp      float64
+	MinTempValid bool
+	MaxTempValid bool
+	MinTempTime  string
+	MaxTempTime  string
+	RainTotal    float64
+	HasRain      bool
+	MaxWind      float64
+	MaxGust      float64
+	HasWind      bool
 }
 
 // StationReading pairs a station with its latest observation.

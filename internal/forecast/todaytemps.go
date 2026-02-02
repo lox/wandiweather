@@ -1,10 +1,9 @@
-package api
+package forecast
 
 import (
 	"log"
 	"math"
 
-	"github.com/lox/wandiweather/internal/forecast"
 	"github.com/lox/wandiweather/internal/models"
 	"github.com/lox/wandiweather/internal/store"
 )
@@ -14,8 +13,8 @@ type TodayTempInput struct {
 	WUForecast       *models.Forecast
 	BOMForecast      *models.Forecast
 	CorrectionStats  map[string]map[string]map[int]*store.CorrectionStats
-	BiasCorrector    *forecast.BiasCorrector
-	Nowcaster        *forecast.Nowcaster
+	BiasCorrector    *BiasCorrector
+	Nowcaster        *Nowcaster
 	PrimaryStationID string
 	CurrentTemp      float64
 	HasCurrentTemp   bool
@@ -30,20 +29,110 @@ type TodayTempInput struct {
 
 // TodayTempResult contains the computed display temperatures and explanation.
 type TodayTempResult struct {
-	TempMax           float64
-	TempMin           float64
-	TempMaxRaw        float64
-	NowcastApplied    bool
-	NowcastAdjustment float64
-	Explanation       ForecastExplanation
-	HaveMax           bool
-	HaveMin           bool
+	TempMax              float64
+	TempMin              float64
+	TempMaxPreNowcast    float64 // max temp before nowcast adjustment (for UI "revised from" display)
+	NowcastApplied       bool
+	NowcastAdjustment    float64
+	Explanation          TempExplanation
+	HaveMax              bool
+	HaveMin              bool
 }
 
-// computeTodayTemps calculates today's display temperatures using standardized logic:
+// TempExplanation tracks how the forecast was calculated.
+type TempExplanation struct {
+	MaxSource       string  // "bom" or "wu"
+	MaxRaw          float64 // raw forecast value
+	MaxBiasApplied  float64 // bias correction applied
+	MaxBiasDayUsed  int     // which day's bias was used (-1 if none)
+	MaxBiasSamples  int     // how many samples the bias is based on
+	MaxBiasFallback bool    // true if fallback day was used
+	MaxNowcast      float64 // nowcast adjustment (if any)
+	MaxFinal        float64 // final displayed value
+	MinSource       string
+	MinRaw          float64
+	MinBiasApplied  float64
+	MinBiasDayUsed  int  // which day's bias was used (-1 if none)
+	MinBiasSamples  int  // how many samples the bias is based on
+	MinBiasFallback bool // true if fallback day was used
+	MinFinal        float64
+}
+
+// BiasLookupResult contains the bias correction and metadata about how it was determined.
+type BiasLookupResult struct {
+	Bias       float64
+	DayUsed    int  // which day's stats were used (-1 if none)
+	Samples    int  // sample size the bias is based on
+	IsFallback bool // true if a fallback day was used
+}
+
+// LookupBiasWithFallback returns the bias correction for a source/target/day,
+// falling back to nearby days if the exact day doesn't have enough samples.
+func LookupBiasWithFallback(stats map[string]map[string]map[int]*store.CorrectionStats, source, target string, dayOfForecast int) BiasLookupResult {
+	if stats == nil || stats[source] == nil || stats[source][target] == nil {
+		return BiasLookupResult{DayUsed: -1}
+	}
+
+	targetStats := stats[source][target]
+
+	// First, try the exact day
+	if s := targetStats[dayOfForecast]; s != nil && s.SampleSize >= minBiasSamples {
+		bias := s.MeanBias
+		if bias > MaxBiasCorrection {
+			bias = MaxBiasCorrection
+		} else if bias < -MaxBiasCorrection {
+			bias = -MaxBiasCorrection
+		}
+		return BiasLookupResult{
+			Bias:       bias,
+			DayUsed:    dayOfForecast,
+			Samples:    s.SampleSize,
+			IsFallback: false,
+		}
+	}
+
+	// Fallback: find the nearest day with sufficient samples
+	// Search nearby days (prefer closer days, then lower days on tie)
+	searchOrder := []int{}
+	for delta := 1; delta <= 14; delta++ {
+		// Try lower day first (prefer earlier lead times on tie)
+		if dayOfForecast-delta >= 0 {
+			searchOrder = append(searchOrder, dayOfForecast-delta)
+		}
+		if dayOfForecast+delta <= 14 {
+			searchOrder = append(searchOrder, dayOfForecast+delta)
+		}
+	}
+
+	for _, day := range searchOrder {
+		if s := targetStats[day]; s != nil && s.SampleSize >= minBiasSamples {
+			bias := s.MeanBias
+			if bias > MaxBiasCorrection {
+				bias = MaxBiasCorrection
+			} else if bias < -MaxBiasCorrection {
+				bias = -MaxBiasCorrection
+			}
+			return BiasLookupResult{
+				Bias:       bias,
+				DayUsed:    day,
+				Samples:    s.SampleSize,
+				IsFallback: true,
+			}
+		}
+	}
+
+	return BiasLookupResult{DayUsed: -1}
+}
+
+// LookupBias returns just the bias value for a source/target/day (convenience wrapper).
+func LookupBias(stats map[string]map[string]map[int]*store.CorrectionStats, source, target string, dayOfForecast int) float64 {
+	return LookupBiasWithFallback(stats, source, target, dayOfForecast).Bias
+}
+
+// ComputeTodayTemps calculates today's display temperatures using standardized logic:
 // - Max temp: prefer BOM (with sanity checks), apply bias correction + nowcast, use observed as floor
 // - Min temp: prefer WU, apply bias correction, use observed as ceiling
-func computeTodayTemps(input TodayTempInput) TodayTempResult {
+func ComputeTodayTemps(input TodayTempInput) TodayTempResult {
 	result := TodayTempResult{}
 	exp := &result.Explanation
 
@@ -57,8 +146,8 @@ func computeTodayTemps(input TodayTempInput) TodayTempResult {
 		useBOMMax = false // Current temp already exceeds BOM forecast
 	}
 	if useBOMMax && wuForecast != nil && wuForecast.TempMax.Valid {
-		if wuForecast.TempMax.Float64-bomForecast.TempMax.Float64 > 10 {
-			useBOMMax = false // WU and BOM differ by more than 10°C, BOM likely wrong
+		if math.Abs(wuForecast.TempMax.Float64-bomForecast.TempMax.Float64) > 10 {
+			useBOMMax = false // WU and BOM differ by more than 10°C, one is likely wrong
 		}
 	}
 
@@ -68,7 +157,7 @@ func computeTodayTemps(input TodayTempInput) TodayTempResult {
 		result.TempMax = bomForecast.TempMax.Float64
 		result.HaveMax = true
 
-		biasResult := getCorrectionBiasWithFallback(input.CorrectionStats, "bom", "tmax", bomForecast.DayOfForecast)
+		biasResult := LookupBiasWithFallback(input.CorrectionStats, "bom", "tmax", bomForecast.DayOfForecast)
 		if biasResult.DayUsed >= 0 {
 			exp.MaxBiasApplied = biasResult.Bias
 			exp.MaxBiasDayUsed = biasResult.DayUsed
@@ -78,10 +167,10 @@ func computeTodayTemps(input TodayTempInput) TodayTempResult {
 		} else {
 			exp.MaxBiasDayUsed = -1
 		}
-		result.TempMaxRaw = math.Round(result.TempMax)
+		result.TempMaxPreNowcast = math.Round(result.TempMax)
 
 		// Nowcast using BOM as base
-		if bomForecast.DayOfForecast == 0 && input.PrimaryStationID != "" {
+		if bomForecast.DayOfForecast == 0 && input.PrimaryStationID != "" && input.BiasCorrector != nil && input.Nowcaster != nil {
 			biasMax := input.BiasCorrector.GetCorrection("bom", "tmax", 0)
 			nowcast, err := input.Nowcaster.ComputeNowcast(input.PrimaryStationID, bomForecast.TempMax.Float64, biasMax)
 			if err == nil && nowcast != nil {
@@ -91,7 +180,7 @@ func computeTodayTemps(input TodayTempInput) TodayTempResult {
 				result.NowcastAdjustment = nowcast.Adjustment
 				if input.LogNowcast {
 					if err := input.Nowcaster.LogNowcast(input.PrimaryStationID, bomForecast.TempMax.Float64, nowcast); err != nil {
-						log.Printf("api: log nowcast: %v", err)
+						log.Printf("forecast: log nowcast: %v", err)
 					}
 				}
 			}
@@ -105,7 +194,7 @@ func computeTodayTemps(input TodayTempInput) TodayTempResult {
 		result.TempMax = wuForecast.TempMax.Float64
 		result.HaveMax = true
 
-		biasResult := getCorrectionBiasWithFallback(input.CorrectionStats, "wu", "tmax", wuForecast.DayOfForecast)
+		biasResult := LookupBiasWithFallback(input.CorrectionStats, "wu", "tmax", wuForecast.DayOfForecast)
 		if biasResult.DayUsed >= 0 {
 			exp.MaxBiasApplied = biasResult.Bias
 			exp.MaxBiasDayUsed = biasResult.DayUsed
@@ -115,7 +204,7 @@ func computeTodayTemps(input TodayTempInput) TodayTempResult {
 		} else {
 			exp.MaxBiasDayUsed = -1
 		}
-		result.TempMaxRaw = math.Round(result.TempMax)
+		result.TempMaxPreNowcast = math.Round(result.TempMax)
 		result.TempMax = math.Round(result.TempMax)
 		exp.MaxFinal = result.TempMax
 	}
@@ -157,7 +246,7 @@ func computeTodayTemps(input TodayTempInput) TodayTempResult {
 		result.TempMin = wuForecast.TempMin.Float64
 		result.HaveMin = true
 
-		biasResult := getCorrectionBiasWithFallback(input.CorrectionStats, "wu", "tmin", wuForecast.DayOfForecast)
+		biasResult := LookupBiasWithFallback(input.CorrectionStats, "wu", "tmin", wuForecast.DayOfForecast)
 		if biasResult.DayUsed >= 0 {
 			exp.MinBiasApplied = biasResult.Bias
 			exp.MinBiasDayUsed = biasResult.DayUsed
@@ -176,7 +265,7 @@ func computeTodayTemps(input TodayTempInput) TodayTempResult {
 		result.TempMin = bomForecast.TempMin.Float64
 		result.HaveMin = true
 
-		biasResult := getCorrectionBiasWithFallback(input.CorrectionStats, "bom", "tmin", bomForecast.DayOfForecast)
+		biasResult := LookupBiasWithFallback(input.CorrectionStats, "bom", "tmin", bomForecast.DayOfForecast)
 		if biasResult.DayUsed >= 0 {
 			exp.MinBiasApplied = biasResult.Bias
 			exp.MinBiasDayUsed = biasResult.DayUsed
