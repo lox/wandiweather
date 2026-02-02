@@ -259,6 +259,196 @@ type StationReading struct {
 	Obs     *models.Observation
 }
 
+// TodayTempInput contains all the inputs needed to compute today's display temperatures
+type TodayTempInput struct {
+	WUForecast       *models.Forecast
+	BOMForecast      *models.Forecast
+	CorrectionStats  map[string]map[string]map[int]*store.CorrectionStats
+	BiasCorrector    *forecast.BiasCorrector
+	Nowcaster        *forecast.Nowcaster
+	PrimaryStationID string
+	CurrentTemp      float64
+	HasCurrentTemp   bool
+	ObservedMax      float64
+	ObservedMaxValid bool
+	ObservedMin      float64
+	ObservedMinValid bool
+	Hour             int
+	TempFalling      bool // true if temp is falling > 0.5°C/hr
+	LogNowcast       bool // whether to log nowcast to DB
+}
+
+// TodayTempResult contains the computed display temperatures and explanation
+type TodayTempResult struct {
+	TempMax           float64
+	TempMin           float64
+	TempMaxRaw        float64
+	NowcastApplied    bool
+	NowcastAdjustment float64
+	Explanation       ForecastExplanation
+	HaveMax           bool
+	HaveMin           bool
+}
+
+// computeTodayTemps calculates today's display temperatures using standardized logic:
+// - Max temp: prefer BOM (with sanity checks), apply bias correction + nowcast, use observed as floor
+// - Min temp: prefer WU, apply bias correction, use observed as ceiling
+func computeTodayTemps(input TodayTempInput) TodayTempResult {
+	result := TodayTempResult{}
+	exp := &result.Explanation
+
+	wuForecast := input.WUForecast
+	bomForecast := input.BOMForecast
+
+	// MAX TEMP: prefer BOM (better accuracy), but fall back to WU if BOM is unreasonable
+	// "Unreasonable" = current temp already exceeds BOM forecast by >3°C, or BOM differs from WU by >10°C
+	useBOMMax := bomForecast != nil && bomForecast.TempMax.Valid
+	if useBOMMax && input.HasCurrentTemp && input.CurrentTemp > bomForecast.TempMax.Float64+3 {
+		useBOMMax = false // Current temp already exceeds BOM forecast
+	}
+	if useBOMMax && wuForecast != nil && wuForecast.TempMax.Valid {
+		if wuForecast.TempMax.Float64-bomForecast.TempMax.Float64 > 10 {
+			useBOMMax = false // WU and BOM differ by more than 10°C, BOM likely wrong
+		}
+	}
+
+	if useBOMMax {
+		exp.MaxSource = "bom"
+		exp.MaxRaw = bomForecast.TempMax.Float64
+		result.TempMax = bomForecast.TempMax.Float64
+		result.HaveMax = true
+
+		biasResult := getCorrectionBiasWithFallback(input.CorrectionStats, "bom", "tmax", bomForecast.DayOfForecast)
+		if biasResult.DayUsed >= 0 {
+			exp.MaxBiasApplied = biasResult.Bias
+			exp.MaxBiasDayUsed = biasResult.DayUsed
+			exp.MaxBiasSamples = biasResult.Samples
+			exp.MaxBiasFallback = biasResult.IsFallback
+			result.TempMax = bomForecast.TempMax.Float64 - biasResult.Bias
+		} else {
+			exp.MaxBiasDayUsed = -1
+		}
+		result.TempMaxRaw = math.Round(result.TempMax)
+
+		// Nowcast using BOM as base
+		if bomForecast.DayOfForecast == 0 && input.PrimaryStationID != "" {
+			biasMax := input.BiasCorrector.GetCorrection("bom", "tmax", 0)
+			nowcast, err := input.Nowcaster.ComputeNowcast(input.PrimaryStationID, bomForecast.TempMax.Float64, biasMax)
+			if err == nil && nowcast != nil {
+				exp.MaxNowcast = nowcast.Adjustment
+				result.TempMax = nowcast.CorrectedMax
+				result.NowcastApplied = true
+				result.NowcastAdjustment = nowcast.Adjustment
+				if input.LogNowcast {
+					if err := input.Nowcaster.LogNowcast(input.PrimaryStationID, bomForecast.TempMax.Float64, nowcast); err != nil {
+						log.Printf("api: log nowcast: %v", err)
+					}
+				}
+			}
+		}
+		result.TempMax = math.Round(result.TempMax)
+		exp.MaxFinal = result.TempMax
+	} else if wuForecast != nil && wuForecast.TempMax.Valid {
+		// Fallback to WU if BOM unavailable
+		exp.MaxSource = "wu"
+		exp.MaxRaw = wuForecast.TempMax.Float64
+		result.TempMax = wuForecast.TempMax.Float64
+		result.HaveMax = true
+
+		biasResult := getCorrectionBiasWithFallback(input.CorrectionStats, "wu", "tmax", wuForecast.DayOfForecast)
+		if biasResult.DayUsed >= 0 {
+			exp.MaxBiasApplied = biasResult.Bias
+			exp.MaxBiasDayUsed = biasResult.DayUsed
+			exp.MaxBiasSamples = biasResult.Samples
+			exp.MaxBiasFallback = biasResult.IsFallback
+			result.TempMax = wuForecast.TempMax.Float64 - biasResult.Bias
+		} else {
+			exp.MaxBiasDayUsed = -1
+		}
+		result.TempMaxRaw = math.Round(result.TempMax)
+		result.TempMax = math.Round(result.TempMax)
+		exp.MaxFinal = result.TempMax
+	}
+
+	// Use observed max as floor if it exceeds the corrected forecast
+	if result.HaveMax && input.ObservedMaxValid && input.ObservedMax > result.TempMax {
+		result.TempMax = math.Round(input.ObservedMax)
+		exp.MaxFinal = result.TempMax
+	}
+
+	// After ~3 PM local time, if temp is falling, just use observed max
+	// The day's max has likely already occurred
+	if result.HaveMax && input.Hour >= 15 && input.TempFalling && input.ObservedMaxValid && input.ObservedMax > 0 {
+		result.TempMax = math.Round(input.ObservedMax)
+		exp.MaxFinal = result.TempMax
+	}
+
+	// Sanity check: if the corrected forecast exceeds both the raw forecast
+	// AND the observed max by more than 3°C, the correction is likely wrong.
+	if result.HaveMax && input.ObservedMaxValid {
+		rawMax := exp.MaxRaw
+		observedMax := input.ObservedMax
+		correctedMax := result.TempMax
+		if correctedMax > rawMax+3 && correctedMax > observedMax+3 {
+			if observedMax > rawMax {
+				result.TempMax = math.Round(observedMax)
+			} else {
+				result.TempMax = math.Round(rawMax)
+			}
+			exp.MaxFinal = result.TempMax
+			exp.MaxBiasApplied = 0 // Mark that correction was rejected
+		}
+	}
+
+	// MIN TEMP: prefer WU (better accuracy)
+	if wuForecast != nil && wuForecast.TempMin.Valid {
+		exp.MinSource = "wu"
+		exp.MinRaw = wuForecast.TempMin.Float64
+		result.TempMin = wuForecast.TempMin.Float64
+		result.HaveMin = true
+
+		biasResult := getCorrectionBiasWithFallback(input.CorrectionStats, "wu", "tmin", wuForecast.DayOfForecast)
+		if biasResult.DayUsed >= 0 {
+			exp.MinBiasApplied = biasResult.Bias
+			exp.MinBiasDayUsed = biasResult.DayUsed
+			exp.MinBiasSamples = biasResult.Samples
+			exp.MinBiasFallback = biasResult.IsFallback
+			result.TempMin = wuForecast.TempMin.Float64 - biasResult.Bias
+		} else {
+			exp.MinBiasDayUsed = -1
+		}
+		result.TempMin = math.Round(result.TempMin)
+		exp.MinFinal = result.TempMin
+	} else if bomForecast != nil && bomForecast.TempMin.Valid {
+		// Fallback to BOM if WU unavailable
+		exp.MinSource = "bom"
+		exp.MinRaw = bomForecast.TempMin.Float64
+		result.TempMin = bomForecast.TempMin.Float64
+		result.HaveMin = true
+
+		biasResult := getCorrectionBiasWithFallback(input.CorrectionStats, "bom", "tmin", bomForecast.DayOfForecast)
+		if biasResult.DayUsed >= 0 {
+			exp.MinBiasApplied = biasResult.Bias
+			exp.MinBiasDayUsed = biasResult.DayUsed
+			exp.MinBiasSamples = biasResult.Samples
+			exp.MinBiasFallback = biasResult.IsFallback
+			result.TempMin = bomForecast.TempMin.Float64 - biasResult.Bias
+		} else {
+			exp.MinBiasDayUsed = -1
+		}
+		result.TempMin = math.Round(result.TempMin)
+		exp.MinFinal = result.TempMin
+	}
+
+	// Use observed min as ceiling (can't predict higher than what we've already seen)
+	if result.HaveMin && input.ObservedMinValid && input.ObservedMin < result.TempMin {
+		result.TempMin = math.Round(input.ObservedMin)
+		exp.MinFinal = result.TempMin
+	}
+
+	return result
+}
+
 type InversionStatus struct {
 	Active      bool
 	Strength    float64
@@ -433,10 +623,7 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 		}
 
 		if wuForecast != nil || bomForecast != nil {
-			tf := &TodayForecast{}
-			exp := &tf.Explanation
-
-			// Get current temp for sanity checking
+			// Build input for shared temperature computation
 			var currentTemp float64
 			var hasCurrentTemp bool
 			if data.Primary != nil && data.Primary.Temp.Valid {
@@ -444,144 +631,42 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 				hasCurrentTemp = true
 			}
 
-			// MAX TEMP: prefer BOM (better accuracy), but fall back to WU if BOM is unreasonable
-			// "Unreasonable" = current temp already exceeds BOM forecast by >3°C, or BOM differs from WU by >10°C
-			useBOMMax := bomForecast != nil && bomForecast.TempMax.Valid
-			if useBOMMax && hasCurrentTemp && currentTemp > bomForecast.TempMax.Float64+3 {
-				useBOMMax = false // Current temp already exceeds BOM forecast
-			}
-			if useBOMMax && wuForecast != nil && wuForecast.TempMax.Valid {
-				if wuForecast.TempMax.Float64-bomForecast.TempMax.Float64 > 10 {
-					useBOMMax = false // WU and BOM differ by more than 10°C, BOM likely wrong
-				}
-			}
-
-			if useBOMMax {
-				exp.MaxSource = "bom"
-				exp.MaxRaw = bomForecast.TempMax.Float64
-				tf.TempMax = bomForecast.TempMax.Float64
-
-				biasResult := getCorrectionBiasWithFallback(correctionStats, "bom", "tmax", bomForecast.DayOfForecast)
-				if biasResult.DayUsed >= 0 {
-					exp.MaxBiasApplied = biasResult.Bias
-					exp.MaxBiasDayUsed = biasResult.DayUsed
-					exp.MaxBiasSamples = biasResult.Samples
-					exp.MaxBiasFallback = biasResult.IsFallback
-					tf.TempMax = bomForecast.TempMax.Float64 - biasResult.Bias
-				} else {
-					exp.MaxBiasDayUsed = -1
-				}
-				tf.TempMaxRaw = math.Round(tf.TempMax)
-
-				// Nowcast using BOM as base
-				if bomForecast.DayOfForecast == 0 && primaryStationID != "" {
-					biasMax := biasCorrector.GetCorrection("bom", "tmax", 0)
-					nowcast, err := nowcaster.ComputeNowcast(primaryStationID, bomForecast.TempMax.Float64, biasMax)
-					if err == nil && nowcast != nil {
-						exp.MaxNowcast = nowcast.Adjustment
-						tf.TempMax = nowcast.CorrectedMax
-						tf.NowcastApplied = true
-						tf.NowcastAdjustment = nowcast.Adjustment
-						if err := nowcaster.LogNowcast(primaryStationID, bomForecast.TempMax.Float64, nowcast); err != nil {
-							log.Printf("api: log nowcast: %v", err)
-						}
-					}
-				}
-				tf.TempMax = math.Round(tf.TempMax)
-				exp.MaxFinal = tf.TempMax
-			} else if wuForecast != nil && wuForecast.TempMax.Valid {
-				// Fallback to WU if BOM unavailable
-				exp.MaxSource = "wu"
-				exp.MaxRaw = wuForecast.TempMax.Float64
-				tf.TempMax = wuForecast.TempMax.Float64
-
-				biasResult := getCorrectionBiasWithFallback(correctionStats, "wu", "tmax", wuForecast.DayOfForecast)
-				if biasResult.DayUsed >= 0 {
-					exp.MaxBiasApplied = biasResult.Bias
-					exp.MaxBiasDayUsed = biasResult.DayUsed
-					exp.MaxBiasSamples = biasResult.Samples
-					exp.MaxBiasFallback = biasResult.IsFallback
-					tf.TempMax = wuForecast.TempMax.Float64 - biasResult.Bias
-				} else {
-					exp.MaxBiasDayUsed = -1
-				}
-				tf.TempMaxRaw = math.Round(tf.TempMax)
-				tf.TempMax = math.Round(tf.TempMax)
-				exp.MaxFinal = tf.TempMax
-			}
-
-			// Use observed max as floor if it exceeds the corrected forecast
-			// This prevents showing a lower forecast than what's already been recorded
-			if data.TodayStats != nil && data.TodayStats.MaxTemp > tf.TempMax {
-				tf.TempMax = math.Round(data.TodayStats.MaxTemp)
-				exp.MaxFinal = tf.TempMax
-			}
-
-			// After ~3 PM local time, if temp is falling, just use observed max
-			// The day's max has likely already occurred
-			hour := now.Hour()
-			isFalling := data.TempChangeRate != nil && *data.TempChangeRate < -0.5
-			if hour >= 15 && isFalling && data.TodayStats != nil && data.TodayStats.MaxTemp > 0 {
-				tf.TempMax = math.Round(data.TodayStats.MaxTemp)
-				exp.MaxFinal = tf.TempMax
-			}
-
-			// Sanity check: if the corrected forecast exceeds both the raw forecast
-			// AND the observed max by more than 3°C, the correction is likely wrong.
-			// In this case, prefer the higher of raw forecast or observed max.
+			var observedMax, observedMin float64
+			var observedMaxValid, observedMinValid bool
 			if data.TodayStats != nil {
-				rawMax := exp.MaxRaw
-				observedMax := data.TodayStats.MaxTemp
-				correctedMax := tf.TempMax
-				// If correction pushed temp more than 3° above both raw and observed
-				if correctedMax > rawMax+3 && correctedMax > observedMax+3 {
-					// Use the higher of raw forecast or observed max
-					if observedMax > rawMax {
-						tf.TempMax = math.Round(observedMax)
-					} else {
-						tf.TempMax = math.Round(rawMax)
-					}
-					exp.MaxFinal = tf.TempMax
-					exp.MaxBiasApplied = 0 // Mark that correction was rejected
-				}
+				observedMax = data.TodayStats.MaxTemp
+				observedMaxValid = observedMax > 0 || data.TodayStats.MinTemp > 0 // proxy for valid
+				observedMin = data.TodayStats.MinTemp
+				observedMinValid = true
 			}
 
-			// MIN TEMP: prefer WU (better accuracy)
-			if wuForecast != nil && wuForecast.TempMin.Valid {
-				exp.MinSource = "wu"
-				exp.MinRaw = wuForecast.TempMin.Float64
-				tf.TempMin = wuForecast.TempMin.Float64
+			tempInput := TodayTempInput{
+				WUForecast:       wuForecast,
+				BOMForecast:      bomForecast,
+				CorrectionStats:  correctionStats,
+				BiasCorrector:    biasCorrector,
+				Nowcaster:        nowcaster,
+				PrimaryStationID: primaryStationID,
+				CurrentTemp:      currentTemp,
+				HasCurrentTemp:   hasCurrentTemp,
+				ObservedMax:      observedMax,
+				ObservedMaxValid: observedMaxValid,
+				ObservedMin:      observedMin,
+				ObservedMinValid: observedMinValid,
+				Hour:             now.Hour(),
+				TempFalling:      data.TempChangeRate != nil && *data.TempChangeRate < -0.5,
+				LogNowcast:       true, // Log nowcast for the main display
+			}
 
-				biasResult := getCorrectionBiasWithFallback(correctionStats, "wu", "tmin", wuForecast.DayOfForecast)
-				if biasResult.DayUsed >= 0 {
-					exp.MinBiasApplied = biasResult.Bias
-					exp.MinBiasDayUsed = biasResult.DayUsed
-					exp.MinBiasSamples = biasResult.Samples
-					exp.MinBiasFallback = biasResult.IsFallback
-					tf.TempMin = wuForecast.TempMin.Float64 - biasResult.Bias
-				} else {
-					exp.MinBiasDayUsed = -1
-				}
-				tf.TempMin = math.Round(tf.TempMin)
-				exp.MinFinal = tf.TempMin
-			} else if bomForecast != nil && bomForecast.TempMin.Valid {
-				// Fallback to BOM if WU unavailable
-				exp.MinSource = "bom"
-				exp.MinRaw = bomForecast.TempMin.Float64
-				tf.TempMin = bomForecast.TempMin.Float64
+			tempResult := computeTodayTemps(tempInput)
 
-				biasResult := getCorrectionBiasWithFallback(correctionStats, "bom", "tmin", bomForecast.DayOfForecast)
-				if biasResult.DayUsed >= 0 {
-					exp.MinBiasApplied = biasResult.Bias
-					exp.MinBiasDayUsed = biasResult.DayUsed
-					exp.MinBiasSamples = biasResult.Samples
-					exp.MinBiasFallback = biasResult.IsFallback
-					tf.TempMin = bomForecast.TempMin.Float64 - biasResult.Bias
-				} else {
-					exp.MinBiasDayUsed = -1
-				}
-				tf.TempMin = math.Round(tf.TempMin)
-				exp.MinFinal = tf.TempMin
+			tf := &TodayForecast{
+				TempMax:           tempResult.TempMax,
+				TempMin:           tempResult.TempMin,
+				TempMaxRaw:        tempResult.TempMaxRaw,
+				NowcastApplied:    tempResult.NowcastApplied,
+				NowcastAdjustment: tempResult.NowcastAdjustment,
+				Explanation:       tempResult.Explanation,
 			}
 
 			// Precip from WU (has more detail)
@@ -617,8 +702,9 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 					ValidDate:     todayDate,
 					DayOfForecast: dayOfForecast,
 				}
-				df.WUForecastID = sql.NullInt64{Int64: wuForecast.ID, Valid: true}
-				df.BOMForecastID = sql.NullInt64{Int64: bomForecast.ID, Valid: true}
+				exp := tf.Explanation
+				df.WUForecastID = sql.NullInt64{Int64: wuForecast.ID, Valid: wuForecast != nil}
+				df.BOMForecastID = sql.NullInt64{Int64: bomForecast.ID, Valid: bomForecast != nil}
 				df.RawTempMax = sql.NullFloat64{Float64: exp.MaxRaw, Valid: exp.MaxSource != ""}
 				df.RawTempMin = sql.NullFloat64{Float64: exp.MinRaw, Valid: exp.MinSource != ""}
 				df.CorrectedTempMax = sql.NullFloat64{Float64: exp.MaxFinal, Valid: exp.MaxSource != ""}
@@ -839,6 +925,8 @@ type ForecastDay struct {
 	WUCorrectedMin     *float64 `json:"wu_corrected_min,omitempty"`
 	BOMCorrectedMax    *float64 `json:"bom_corrected_max,omitempty"`
 	BOMCorrectedMin    *float64 `json:"bom_corrected_min,omitempty"`
+	DisplayMax         *float64 `json:"display_max,omitempty"`
+	DisplayMin         *float64 `json:"display_min,omitempty"`
 	GeneratedNarrative string   `json:"generated_narrative"`
 }
 
@@ -930,17 +1018,61 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 	nowcaster := forecast.NewNowcaster(s.store, s.loc)
 	biasCorrector := forecast.NewBiasCorrector(s.store)
 
+	// Get today's observed stats and current temp for the shared helper
+	var observedMax, observedMin float64
+	var observedMaxValid, observedMinValid bool
+	var currentTemp float64
+	var hasCurrentTemp bool
+	if primaryStationID != "" {
+		if todayStats, err := s.store.GetTodayStatsExtended(primaryStationID, today); err == nil {
+			if todayStats.MaxTemp.Valid {
+				observedMax = todayStats.MaxTemp.Float64
+				observedMaxValid = true
+			}
+			if todayStats.MinTemp.Valid {
+				observedMin = todayStats.MinTemp.Float64
+				observedMinValid = true
+			}
+		}
+		// Get current temp from latest observation
+		if obs, err := s.store.GetLatestObservation(primaryStationID); err == nil && obs != nil && obs.Temp.Valid {
+			currentTemp = obs.Temp.Float64
+			hasCurrentTemp = true
+		}
+	}
+
 	var days []ForecastDay
 	for i := 0; i < 5; i++ {
 		date := todayDate.AddDate(0, 0, i)
 		key := date.Format("2006-01-02")
 		if day, ok := dayMap[key]; ok {
-			if day.IsToday && day.WU != nil && day.WU.TempMax.Valid && primaryStationID != "" {
-				biasMax := biasCorrector.GetCorrection("wu", "tmax", 0)
-				nowcast, err := nowcaster.ComputeNowcast(primaryStationID, day.WU.TempMax.Float64, biasMax)
-				if err == nil && nowcast != nil {
-					corrected := nowcast.CorrectedMax
-					day.WUCorrectedMax = &corrected
+			if day.IsToday && primaryStationID != "" {
+				// Use shared helper for consistent temperature computation
+				tempInput := TodayTempInput{
+					WUForecast:       day.WU,
+					BOMForecast:      day.BOM,
+					CorrectionStats:  correctionStats,
+					BiasCorrector:    biasCorrector,
+					Nowcaster:        nowcaster,
+					PrimaryStationID: primaryStationID,
+					CurrentTemp:      currentTemp,
+					HasCurrentTemp:   hasCurrentTemp,
+					ObservedMax:      observedMax,
+					ObservedMaxValid: observedMaxValid,
+					ObservedMin:      observedMin,
+					ObservedMinValid: observedMinValid,
+					Hour:             today.Hour(),
+					TempFalling:      false, // We don't have temp change rate here, safer to not assume
+					LogNowcast:       false, // Don't log again, main display already logged
+				}
+
+				tempResult := computeTodayTemps(tempInput)
+
+				if tempResult.HaveMax {
+					day.DisplayMax = &tempResult.TempMax
+				}
+				if tempResult.HaveMin {
+					day.DisplayMin = &tempResult.TempMin
 				}
 			}
 			day.GeneratedNarrative = buildGeneratedNarrative(day)
