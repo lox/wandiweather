@@ -154,3 +154,125 @@ func TestRegimeToString_Priority(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifyRegime_ClearCalm(t *testing.T) {
+	tests := []struct {
+		name    string
+		summary *models.DailySummary
+		want    bool
+	}{
+		{
+			name:    "nil summary",
+			summary: nil,
+			want:    false,
+		},
+		{
+			name: "all conditions met - clear calm",
+			summary: &models.DailySummary{
+				PrecipTotal:       sql.NullFloat64{Float64: 0.0, Valid: true},
+				SolarIntegral:     sql.NullFloat64{Float64: 15.0, Valid: true},
+				CalmFractionNight: sql.NullFloat64{Float64: 0.5, Valid: true},
+			},
+			want: true,
+		},
+		{
+			name: "too much precip",
+			summary: &models.DailySummary{
+				PrecipTotal:       sql.NullFloat64{Float64: 2.0, Valid: true},
+				SolarIntegral:     sql.NullFloat64{Float64: 15.0, Valid: true},
+				CalmFractionNight: sql.NullFloat64{Float64: 0.5, Valid: true},
+			},
+			want: false,
+		},
+		{
+			name: "low solar",
+			summary: &models.DailySummary{
+				PrecipTotal:       sql.NullFloat64{Float64: 0.0, Valid: true},
+				SolarIntegral:     sql.NullFloat64{Float64: 5.0, Valid: true},
+				CalmFractionNight: sql.NullFloat64{Float64: 0.5, Valid: true},
+			},
+			want: false,
+		},
+		{
+			name: "not calm enough",
+			summary: &models.DailySummary{
+				PrecipTotal:       sql.NullFloat64{Float64: 0.0, Valid: true},
+				SolarIntegral:     sql.NullFloat64{Float64: 15.0, Valid: true},
+				CalmFractionNight: sql.NullFloat64{Float64: 0.2, Valid: true},
+			},
+			want: false,
+		},
+		{
+			name: "boundary values - just dry enough",
+			summary: &models.DailySummary{
+				PrecipTotal:       sql.NullFloat64{Float64: 0.49, Valid: true},
+				SolarIntegral:     sql.NullFloat64{Float64: 10.1, Valid: true},
+				CalmFractionNight: sql.NullFloat64{Float64: 0.41, Valid: true},
+			},
+			want: true,
+		},
+		{
+			name: "missing precip field",
+			summary: &models.DailySummary{
+				PrecipTotal:       sql.NullFloat64{Valid: false},
+				SolarIntegral:     sql.NullFloat64{Float64: 15.0, Valid: true},
+				CalmFractionNight: sql.NullFloat64{Float64: 0.5, Valid: true},
+			},
+			want: false,
+		},
+		{
+			name: "missing solar field",
+			summary: &models.DailySummary{
+				PrecipTotal:       sql.NullFloat64{Float64: 0.0, Valid: true},
+				SolarIntegral:     sql.NullFloat64{Valid: false},
+				CalmFractionNight: sql.NullFloat64{Float64: 0.5, Valid: true},
+			},
+			want: false,
+		},
+		{
+			name: "missing calm fraction field",
+			summary: &models.DailySummary{
+				PrecipTotal:       sql.NullFloat64{Float64: 0.0, Valid: true},
+				SolarIntegral:     sql.NullFloat64{Float64: 15.0, Valid: true},
+				CalmFractionNight: sql.NullFloat64{Valid: false},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ClassifyRegime(nil, tt.summary, nil)
+			if result.ClearCalm != tt.want {
+				t.Errorf("ClearCalm = %v, want %v", result.ClearCalm, tt.want)
+			}
+		})
+	}
+}
+
+func TestClassifyRegime_Combined(t *testing.T) {
+	forecast := &models.Forecast{TempMax: sql.NullFloat64{Float64: 36, Valid: true}}
+	summary := &models.DailySummary{
+		InversionDetected: sql.NullBool{Bool: true, Valid: true},
+		PrecipTotal:       sql.NullFloat64{Float64: 0.0, Valid: true},
+		SolarIntegral:     sql.NullFloat64{Float64: 15.0, Valid: true},
+		CalmFractionNight: sql.NullFloat64{Float64: 0.5, Valid: true},
+	}
+
+	result := ClassifyRegime(forecast, summary, nil)
+
+	if !result.Heatwave {
+		t.Error("Expected Heatwave to be true (forecast >= 35)")
+	}
+	if !result.InversionNight {
+		t.Error("Expected InversionNight to be true")
+	}
+	if !result.ClearCalm {
+		t.Error("Expected ClearCalm to be true (all conditions met)")
+	}
+
+	regime := RegimeToString(result)
+	if regime != "heatwave" {
+		t.Errorf("RegimeToString() = %q, want 'heatwave' (highest priority)", regime)
+	}
+}
