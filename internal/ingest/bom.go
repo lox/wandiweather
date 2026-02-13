@@ -153,6 +153,7 @@ func (b *BOMClient) FetchForecasts() ([]models.Forecast, string, *FetchResult, e
 				}
 			case "precipitation_range":
 				fc.PrecipRange = sql.NullString{String: elem.Value, Valid: elem.Value != ""}
+				fc.PrecipAmount = parsePrecipRange(elem.Value)
 			}
 		}
 
@@ -180,4 +181,24 @@ func (b *BOMClient) FetchForecasts() ([]models.Forecast, string, *FetchResult, e
 	}
 
 	return forecasts, string(body), result, nil
+}
+
+// parsePrecipRange extracts the upper bound from a BOM precipitation range string
+// like "0 to 5 mm" and returns it as a NullFloat64. This provides a comparable
+// numeric value to WU's QPF for forecast verification.
+func parsePrecipRange(s string) sql.NullFloat64 {
+	if s == "" {
+		return sql.NullFloat64{}
+	}
+	// Format: "X to Y mm" — extract Y (upper bound)
+	var lo, hi float64
+	if n, err := fmt.Sscanf(s, "%f to %f mm", &lo, &hi); err == nil && n == 2 {
+		return sql.NullFloat64{Float64: hi, Valid: true}
+	}
+	// Single value like "5 mm"
+	var v float64
+	if n, err := fmt.Sscanf(s, "%f mm", &v); err == nil && n == 1 {
+		return sql.NullFloat64{Float64: v, Valid: true}
+	}
+	return sql.NullFloat64{}
 }

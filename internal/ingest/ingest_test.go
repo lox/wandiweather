@@ -561,3 +561,32 @@ func TestValidateObservation_BoundaryValues(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePrecipRange(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantVal float64
+		wantOk  bool
+	}{
+		{"0 to 5 mm", 5, true},
+		{"0 to 1 mm", 1, true},
+		{"0 to 20 mm", 20, true},
+		{"1 to 5 mm", 5, true},
+		{"0.5 to 2.5 mm", 2.5, true},
+		{"5 mm", 5, true},
+		{"", 0, false},
+		{"unknown", 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := parsePrecipRange(tt.input)
+			if got.Valid != tt.wantOk {
+				t.Errorf("parsePrecipRange(%q).Valid = %v, want %v", tt.input, got.Valid, tt.wantOk)
+			}
+			if got.Valid && got.Float64 != tt.wantVal {
+				t.Errorf("parsePrecipRange(%q).Float64 = %v, want %v", tt.input, got.Float64, tt.wantVal)
+			}
+		})
+	}
+}
