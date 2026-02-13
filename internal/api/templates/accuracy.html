@@ -309,6 +309,39 @@
         </div>
         {{end}}
         
+        {{if .RainStats}}
+        <div class="section-title">Rain Prediction Accuracy</div>
+        <div class="stats-card">
+            <div class="source-compare">
+                {{range .RainStats}}
+                <div class="source-box">
+                    <div class="source-label {{.Source}}">{{if eq .Source "wu"}}WU (D+1){{else}}BOM (D+2){{end}}</div>
+                    <div class="stat-value {{.DetectionClass}}">{{printf "%.0f" .DetectionPct}}%</div>
+                    <div class="stat-label">rain days detected</div>
+                    <div class="stat-row">
+                        <div class="stat-mini">
+                            <div class="value {{.FalseAlarmClass}}">{{printf "%.0f" .FalseAlarmPct}}%</div>
+                            <div class="label">False alarm</div>
+                        </div>
+                        <div class="stat-mini">
+                            <div class="value {{.AccuracyClass}}">{{printf "%.0f" .AccuracyPct}}%</div>
+                            <div class="label">Overall</div>
+                        </div>
+                    </div>
+                    <div class="stat-row">
+                        <div class="stat-mini">
+                            <div class="value">±{{printf "%.1f" .MAEPrecip}}mm</div>
+                            <div class="label">Amount MAE</div>
+                        </div>
+                    </div>
+                    <div class="stat-sublabel" style="margin-top: 0.5rem;">{{.Hits}} hits · {{.Misses}} misses · {{.FalseAlarms}} false · {{.CorrectDry}} dry</div>
+                </div>
+                {{end}}
+            </div>
+            <div class="stat-count">{{range $i, $rs := .RainStats}}{{if $i}} · {{end}}{{if eq $rs.Source "wu"}}WU{{else}}BOM{{end}}: {{$rs.Days}} days ({{$rs.RainDays}} rain){{end}}</div>
+        </div>
+        {{end}}
+        
         {{if .ChartLabels}}
         <div class="section-title">Max Temp Bias Over Time</div>
         <div class="stats-card">

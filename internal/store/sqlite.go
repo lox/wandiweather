@@ -1264,6 +1264,17 @@ func (s *Store) GetBestLeadVerificationWithRegime(limit int) ([]VerificationWith
 }
 
 // RegimeStats holds MAE statistics for a specific regime, broken down by source.
+type RainVerificationStats struct {
+	Source      string
+	Days        int
+	RainDays    int
+	Hits        int
+	FalseAlarms int
+	Misses      int
+	CorrectDry  int
+	MAEPrecip   float64
+}
+
 type RegimeStats struct {
 	Regime    string
 	WUMAEMax  float64
@@ -1341,6 +1352,43 @@ func (s *Store) GetRegimeVerificationStats(windowDays int) ([]RegimeStats, error
 	var results []RegimeStats
 	for _, regime := range regimeOrder {
 		results = append(results, *regimeMap[regime])
+	}
+	return results, rows.Err()
+}
+
+func (s *Store) GetRainVerificationStats(windowDays int) ([]RainVerificationStats, error) {
+	cutoff := time.Now().AddDate(0, 0, -windowDays).Format("2006-01-02")
+	rows, err := s.db.Query(`
+		SELECT
+			f.source,
+			COUNT(*) as days,
+			SUM(CASE WHEN v.actual_precip > 0.2 THEN 1 ELSE 0 END) as rain_days,
+			SUM(CASE WHEN v.forecast_precip > 0.2 AND v.actual_precip > 0.2 THEN 1 ELSE 0 END) as hits,
+			SUM(CASE WHEN v.forecast_precip > 0.2 AND v.actual_precip <= 0.2 THEN 1 ELSE 0 END) as false_alarms,
+			SUM(CASE WHEN v.forecast_precip <= 0.2 AND v.actual_precip > 0.2 THEN 1 ELSE 0 END) as misses,
+			SUM(CASE WHEN v.forecast_precip <= 0.2 AND v.actual_precip <= 0.2 THEN 1 ELSE 0 END) as correct_dry,
+			COALESCE(AVG(CASE WHEN v.actual_precip > 0.2 THEN ABS(v.forecast_precip - v.actual_precip) END), 0) as mae_precip
+		FROM forecast_verification v
+		JOIN forecasts f ON v.forecast_id = f.id
+		WHERE SUBSTR(v.valid_date, 1, 10) >= ?
+		  AND v.forecast_precip IS NOT NULL
+		  AND v.actual_precip IS NOT NULL
+		  AND ((f.source = 'wu' AND f.day_of_forecast = 1) OR (f.source = 'bom' AND f.day_of_forecast = 2))
+		GROUP BY f.source
+		ORDER BY f.source
+	`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []RainVerificationStats
+	for rows.Next() {
+		var rs RainVerificationStats
+		if err := rows.Scan(&rs.Source, &rs.Days, &rs.RainDays, &rs.Hits, &rs.FalseAlarms, &rs.Misses, &rs.CorrectDry, &rs.MAEPrecip); err != nil {
+			return nil, err
+		}
+		results = append(results, rs)
 	}
 	return results, rows.Err()
 }

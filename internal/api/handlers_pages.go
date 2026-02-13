@@ -267,6 +267,57 @@ func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	if rainStats, err := s.store.GetRainVerificationStats(30); err != nil {
+		log.Printf("get rain verification stats: %v", err)
+	} else {
+		for _, rs := range rainStats {
+			d := RainStatsDisplay{
+				Source:      rs.Source,
+				Days:        rs.Days,
+				RainDays:    rs.RainDays,
+				Hits:        rs.Hits,
+				FalseAlarms: rs.FalseAlarms,
+				Misses:      rs.Misses,
+				CorrectDry:  rs.CorrectDry,
+				MAEPrecip:   rs.MAEPrecip,
+			}
+			if rs.Hits+rs.Misses > 0 {
+				d.DetectionPct = float64(rs.Hits) / float64(rs.Hits+rs.Misses) * 100
+			}
+			if rs.FalseAlarms+rs.Hits > 0 {
+				d.FalseAlarmPct = float64(rs.FalseAlarms) / float64(rs.FalseAlarms+rs.Hits) * 100
+			}
+			if rs.Days > 0 {
+				d.AccuracyPct = float64(rs.Hits+rs.CorrectDry) / float64(rs.Days) * 100
+			}
+			switch {
+			case d.DetectionPct > 80:
+				d.DetectionClass = "good"
+			case d.DetectionPct > 60:
+				d.DetectionClass = "warn"
+			default:
+				d.DetectionClass = "bad"
+			}
+			switch {
+			case d.FalseAlarmPct < 30:
+				d.FalseAlarmClass = "good"
+			case d.FalseAlarmPct < 50:
+				d.FalseAlarmClass = "warn"
+			default:
+				d.FalseAlarmClass = "bad"
+			}
+			switch {
+			case d.AccuracyPct > 80:
+				d.AccuracyClass = "good"
+			case d.AccuracyPct > 60:
+				d.AccuracyClass = "warn"
+			default:
+				d.AccuracyClass = "bad"
+			}
+			data.RainStats = append(data.RainStats, d)
+		}
+	}
+
 	s.tmpl.ExecuteTemplate(w, "accuracy.html", data)
 }
 

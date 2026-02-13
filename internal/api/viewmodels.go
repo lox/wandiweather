@@ -141,6 +141,7 @@ type AccuracyData struct {
 	ChartBOMMin    []float64
 	LeadTimeData   []LeadTimeRow
 	RegimeStats    []RegimeRow
+	RainStats      []RainStatsDisplay
 }
 
 // VerificationRow represents a single verification entry.
@@ -180,6 +181,23 @@ type LeadTimeRow struct {
 	BOMMAEMin float64
 	WUDays    int
 	BOMDays   int
+}
+
+type RainStatsDisplay struct {
+	Source          string
+	Days            int
+	RainDays        int
+	Hits            int
+	FalseAlarms     int
+	Misses          int
+	CorrectDry      int
+	DetectionPct    float64
+	FalseAlarmPct   float64
+	AccuracyPct     float64
+	MAEPrecip       float64
+	DetectionClass  string
+	FalseAlarmClass string
+	AccuracyClass   string
 }
 
 // DataPageData contains data health and statistics.
