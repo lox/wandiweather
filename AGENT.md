@@ -22,12 +22,17 @@ task pull-db   # Pull production database from Fly.io
 # Deploy to Fly.io
 fly deploy
 
+# View recent logs (use --no-tail to avoid streaming/hanging)
+fly logs --app wandiweather --no-tail
+
 # Run backfill on prod (must specify --db path)
 fly ssh console -C "/app/wandiweather --db /data/wandiweather.db --backfill-daily"
 
 # Run daily jobs on prod
 fly ssh console -C "/app/wandiweather --db /data/wandiweather.db --daily"
 ```
+
+**Note:** The prod container does not have `sqlite3` installed. Use `task pull-db` to pull the production database locally for queries.
 
 ## Project Structure
 

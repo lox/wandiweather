@@ -117,8 +117,11 @@ func (s *Server) Handler() http.Handler {
 // Run starts the HTTP server and blocks until the context is cancelled.
 func (s *Server) Run(ctx context.Context) error {
 	server := &http.Server{
-		Addr:    ":" + s.port,
-		Handler: s.Handler(),
+		Addr:         ":" + s.port,
+		Handler:      s.Handler(),
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	go func() {
