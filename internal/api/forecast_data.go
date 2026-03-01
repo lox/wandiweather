@@ -156,6 +156,7 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 					day.DisplayMin = &tempResult.TempMin
 				}
 			}
+			day.PrecipDisplay = buildPrecipDisplay(day, s.store)
 			day.GeneratedNarrative = buildGeneratedNarrative(day)
 			days = append(days, *day)
 		}
@@ -257,6 +258,39 @@ func chooseTemps(day *ForecastDay) (hi, lo float64, haveHi, haveLo bool) {
 	}
 
 	return
+}
+
+// buildPrecipDisplay returns a display string for precipitation amount.
+// Prefers BOM's range (e.g. "0–5mm"), falls back to WU amount.
+func buildPrecipDisplay(day *ForecastDay, store precipRangeLookup) string {
+	if day.BOM != nil && day.BOM.PrecipRange.Valid {
+		return formatPrecipRange(day.BOM.PrecipRange.String)
+	}
+	// Fall back to the last known BOM range for this date
+	if store != nil {
+		if r, err := store.GetLastBOMPrecipRange(day.Date); err == nil && r != "" {
+			return formatPrecipRange(r)
+		}
+	}
+	if day.WU != nil && day.WU.PrecipAmount.Valid && day.WU.PrecipAmount.Float64 > 0 {
+		return fmt.Sprintf("%.0fmm", day.WU.PrecipAmount.Float64)
+	}
+	return ""
+}
+
+// precipRangeLookup is the subset of store needed for precip display.
+type precipRangeLookup interface {
+	GetLastBOMPrecipRange(validDate time.Time) (string, error)
+}
+
+// formatPrecipRange converts BOM's "25 to 60 mm" to compact "25–60mm".
+func formatPrecipRange(s string) string {
+	parts := strings.SplitN(s, " to ", 2)
+	if len(parts) == 2 {
+		hi := strings.TrimSuffix(strings.TrimSpace(parts[1]), " mm")
+		return parts[0] + "–" + hi + "mm"
+	}
+	return s
 }
 
 // buildGeneratedNarrative creates a clean narrative with corrected temps.

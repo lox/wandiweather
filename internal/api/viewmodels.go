@@ -55,6 +55,7 @@ type TodayForecast struct {
 	NowcastAdjustment float64
 	PrecipChance      int64
 	PrecipAmount      float64
+	PrecipDisplay     string
 	Narrative         string
 	HasPrecip         bool
 	Explanation       forecast.TempExplanation
@@ -113,6 +114,7 @@ type ForecastDay struct {
 	DisplayMax         *float64 `json:"display_max,omitempty"`
 	DisplayMin         *float64 `json:"display_min,omitempty"`
 	GeneratedNarrative string   `json:"generated_narrative"`
+	PrecipDisplay      string   `json:"precip_display,omitempty"`
 }
 
 // ChartData contains data for the temperature chart.

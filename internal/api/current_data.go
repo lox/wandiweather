@@ -241,7 +241,8 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 			}
 
 			// Build narrative
-			day := &ForecastDay{WU: wuForecast, BOM: bomForecast}
+			day := &ForecastDay{Date: todayDate, WU: wuForecast, BOM: bomForecast}
+			tf.PrecipDisplay = buildPrecipDisplay(day, s.store)
 			if bomForecast != nil && bomForecast.TempMax.Valid {
 				day.BOMCorrectedMax = &tf.TempMax
 			}

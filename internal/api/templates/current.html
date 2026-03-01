@@ -64,7 +64,7 @@
         {{if .TodayForecast.HasPrecip}}
         <div class="range-item">
             <span class="range-value rain">{{.TodayForecast.PrecipChance}}%</span>
-            <span class="range-label">Rain</span>
+            <span class="range-label">Rain{{with .TodayForecast.PrecipDisplay}} · {{.}}{{end}}</span>
         </div>
         {{end}}
     </div>

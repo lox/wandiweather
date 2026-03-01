@@ -16,6 +16,7 @@
         </div>
         {{if .WU}}{{if .WU.PrecipChance.Valid}}{{if gt .WU.PrecipChance.Int64 10}}
         <div class="day-precip">💧{{.WU.PrecipChance.Int64}}%</div>
+        {{with .PrecipDisplay}}<div class="day-precip-amount">{{.}}</div>{{end}}
         {{end}}{{end}}{{end}}
     </div>
     {{end}}
