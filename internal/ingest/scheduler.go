@@ -135,8 +135,6 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 }
 
-
-
 func (s *Scheduler) ingestForecasts() {
 	if s.forecast == nil {
 		return
@@ -194,7 +192,9 @@ func (s *Scheduler) ingestForecasts() {
 
 	if s.bom != nil {
 		log.Println("scheduler: ingesting BOM forecasts")
-		bomRun, _ := s.store.StartIngestRun("bom", "forecast/fwo", nil, &s.bom.areaCode)
+		bomEndpoint := s.bom.Endpoint()
+		bomLocationID := s.bom.locationID
+		bomRun, _ := s.store.StartIngestRun("bom", bomEndpoint, nil, &bomLocationID)
 		bomForecasts, bomRawBody, bomFetchResult, err := s.bom.FetchForecasts()
 
 		if bomRun != nil {
@@ -215,7 +215,7 @@ func (s *Scheduler) ingestForecasts() {
 		}
 
 		if len(bomRawBody) > 0 && bomRun != nil {
-			if _, err := s.store.StoreRawPayload(&bomRun.ID, "bom", "forecast/fwo", nil, &s.bom.areaCode, []byte(bomRawBody)); err != nil {
+			if _, err := s.store.StoreRawPayload(&bomRun.ID, "bom", bomEndpoint, nil, &bomLocationID, []byte(bomRawBody)); err != nil {
 				log.Printf("scheduler: store BOM raw payload: %v", err)
 			}
 		}

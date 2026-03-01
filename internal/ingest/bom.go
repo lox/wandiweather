@@ -2,118 +2,98 @@ package ingest
 
 import (
 	"database/sql"
-	"encoding/xml"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/jlaffaye/ftp"
+	"github.com/lox/wandiweather/internal/httputil"
 	"github.com/lox/wandiweather/internal/models"
 )
 
 const (
-	bomFTPHost     = "ftp.bom.gov.au:21"
-	bomForecastFile = "/anon/gen/fwo/IDV10753.xml"
-	wangarattaAAC  = "VIC_PT075"
+	bomAPIBaseURL      = "https://api.weather.bom.gov.au/v1"
+	wangarattaGeohash6 = "r3811m"
 )
 
 type BOMClient struct {
-	areaCode string
+	locationID string
+	baseURL    string
+	client     *http.Client
 }
 
-func NewBOMClient(areaCode string) *BOMClient {
-	if areaCode == "" {
-		areaCode = wangarattaAAC
+func NewBOMClient(locationID string) *BOMClient {
+	locationID = strings.ToLower(strings.TrimSpace(locationID))
+	if locationID == "" {
+		locationID = wangarattaGeohash6
 	}
-	return &BOMClient{areaCode: areaCode}
+
+	return &BOMClient{
+		locationID: locationID,
+		baseURL:    bomAPIBaseURL,
+		client:     httputil.NewClient(),
+	}
 }
 
-type bomProduct struct {
-	XMLName      xml.Name       `xml:"product"`
-	AmocBulletin bomAmoc        `xml:"amoc"`
-	Forecast     bomForecastDoc `xml:"forecast"`
+func (b *BOMClient) Endpoint() string {
+	return fmt.Sprintf("locations/%s/forecasts/daily", b.locationID)
 }
 
-type bomAmoc struct {
-	IssueTime string `xml:"issue-time-utc"`
+type bomDailyResponse struct {
+	Data []bomDailyForecast `json:"data"`
 }
 
-type bomForecastDoc struct {
-	Areas []bomArea `xml:"area"`
+type bomDailyForecast struct {
+	Date         string   `json:"date"`
+	TempMax      *float64 `json:"temp_max"`
+	TempMin      *float64 `json:"temp_min"`
+	ExtendedText *string  `json:"extended_text"`
+	ShortText    *string  `json:"short_text"`
+	Rain         *bomRain `json:"rain"`
 }
 
-type bomArea struct {
-	AAC         string            `xml:"aac,attr"`
-	Description string            `xml:"description,attr"`
-	Type        string            `xml:"type,attr"`
-	Periods     []bomForecastPeriod `xml:"forecast-period"`
+type bomRain struct {
+	Amount *bomRainAmount `json:"amount"`
+	Chance *int           `json:"chance"`
 }
 
-type bomForecastPeriod struct {
-	Index       int           `xml:"index,attr"`
-	StartTime   string        `xml:"start-time-utc,attr"`
-	EndTime     string        `xml:"end-time-utc,attr"`
-	Elements    []bomElement  `xml:"element"`
-	TextItems   []bomText     `xml:"text"`
-}
-
-type bomElement struct {
-	Type  string `xml:"type,attr"`
-	Units string `xml:"units,attr"`
-	Value string `xml:",chardata"`
-}
-
-type bomText struct {
-	Type  string `xml:"type,attr"`
-	Value string `xml:",chardata"`
+type bomRainAmount struct {
+	Min   *float64 `json:"min"`
+	Max   *float64 `json:"max"`
+	Units string   `json:"units"`
 }
 
 func (b *BOMClient) FetchForecasts() ([]models.Forecast, string, *FetchResult, error) {
 	result := &FetchResult{}
+	url := fmt.Sprintf("%s/%s", strings.TrimRight(b.baseURL, "/"), b.Endpoint())
 
-	conn, err := ftp.Dial(bomFTPHost, ftp.DialWithTimeout(30*time.Second))
+	resp, err := b.client.Get(url)
 	if err != nil {
-		result.Error = fmt.Errorf("ftp dial: %w", err)
+		result.Error = fmt.Errorf("fetch daily forecast: %w", err)
 		return nil, "", result, result.Error
 	}
-	defer conn.Quit()
+	defer resp.Body.Close()
 
-	if err := conn.Login("anonymous", "anonymous"); err != nil {
-		result.Error = fmt.Errorf("ftp login: %w", err)
-		return nil, "", result, result.Error
-	}
+	result.HTTPStatus = resp.StatusCode
 
-	resp, err := conn.Retr(bomForecastFile)
-	if err != nil {
-		result.Error = fmt.Errorf("ftp retr: %w", err)
-		return nil, "", result, result.Error
-	}
-	defer resp.Close()
-
-	body, err := io.ReadAll(resp)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		result.Error = fmt.Errorf("read body: %w", err)
 		return nil, "", result, result.Error
 	}
 	result.ResponseSize = len(body)
-	result.HTTPStatus = 200 // FTP success
 
-	var product bomProduct
-	if err := xml.Unmarshal(body, &product); err != nil {
-		result.Error = fmt.Errorf("unmarshal xml: %w", err)
+	if resp.StatusCode != http.StatusOK {
+		result.Error = fmt.Errorf("fetch daily forecast: status %d: %s", resp.StatusCode, truncateBody(body))
 		return nil, string(body), result, result.Error
 	}
 
-	var targetArea *bomArea
-	for i := range product.Forecast.Areas {
-		if product.Forecast.Areas[i].AAC == b.areaCode && product.Forecast.Areas[i].Type == "location" {
-			targetArea = &product.Forecast.Areas[i]
-			break
-		}
-	}
-	if targetArea == nil {
-		result.Error = fmt.Errorf("area %s not found in forecast", b.areaCode)
+	var data bomDailyResponse
+	if err := json.Unmarshal(body, &data); err != nil {
+		result.Error = fmt.Errorf("unmarshal: %w", err)
 		return nil, string(body), result, result.Error
 	}
 
@@ -123,50 +103,42 @@ func (b *BOMClient) FetchForecasts() ([]models.Forecast, string, *FetchResult, e
 
 	mel, _ := time.LoadLocation("Australia/Melbourne")
 
-	for _, period := range targetArea.Periods {
-		startTime, err := time.Parse(time.RFC3339, period.StartTime)
+	for i, day := range data.Data {
+		dayTime, err := time.Parse(time.RFC3339, day.Date)
 		if err != nil {
-			parseErrors = append(parseErrors, fmt.Sprintf("period[%d].StartTime=%q: %v", period.Index, period.StartTime, err))
+			parseErrors = append(parseErrors, fmt.Sprintf("data[%d].date=%q: %v", i, day.Date, err))
 			continue
 		}
-		localStart := startTime.In(mel)
-		validDate := time.Date(localStart.Year(), localStart.Month(), localStart.Day(), 0, 0, 0, 0, time.UTC)
+		localDate := dayTime.In(mel)
+		validDate := time.Date(localDate.Year(), localDate.Month(), localDate.Day(), 0, 0, 0, 0, time.UTC)
 
 		fc := models.Forecast{
 			Source:        "bom",
 			FetchedAt:     fetchedAt,
 			ValidDate:     validDate,
-			DayOfForecast: period.Index,
-			RawJSON:       "", // Don't store raw XML to save memory
-			LocationID:    sql.NullString{String: b.areaCode, Valid: true},
+			DayOfForecast: i,
+			RawJSON:       "", // Don't store raw JSON to save memory
+			LocationID:    sql.NullString{String: b.locationID, Valid: true},
 		}
 
-		for _, elem := range period.Elements {
-			switch elem.Type {
-			case "air_temperature_maximum":
-				if v, err := strconv.ParseFloat(elem.Value, 64); err == nil {
-					fc.TempMax = sql.NullFloat64{Float64: v, Valid: true}
-				}
-			case "air_temperature_minimum":
-				if v, err := strconv.ParseFloat(elem.Value, 64); err == nil {
-					fc.TempMin = sql.NullFloat64{Float64: v, Valid: true}
-				}
-			case "precipitation_range":
-				fc.PrecipRange = sql.NullString{String: elem.Value, Valid: elem.Value != ""}
-				fc.PrecipAmount = parsePrecipRange(elem.Value)
+		if day.TempMax != nil {
+			fc.TempMax = sql.NullFloat64{Float64: *day.TempMax, Valid: true}
+		}
+		if day.TempMin != nil {
+			fc.TempMin = sql.NullFloat64{Float64: *day.TempMin, Valid: true}
+		}
+		if narrative := pickNarrative(day.ShortText, day.ExtendedText); narrative != "" {
+			fc.Narrative = sql.NullString{String: narrative, Valid: true}
+		}
+
+		if day.Rain != nil {
+			if day.Rain.Chance != nil {
+				fc.PrecipChance = sql.NullInt64{Int64: int64(*day.Rain.Chance), Valid: true}
 			}
-		}
-
-		for _, text := range period.TextItems {
-			switch text.Type {
-			case "precis":
-				fc.Narrative = sql.NullString{String: text.Value, Valid: true}
-			case "probability_of_precipitation":
-				s := text.Value
-				if len(s) > 0 && s[len(s)-1] == '%' {
-					if v, err := strconv.Atoi(s[:len(s)-1]); err == nil {
-						fc.PrecipChance = sql.NullInt64{Int64: int64(v), Valid: true}
-					}
+			if day.Rain.Amount != nil {
+				fc.PrecipRange = buildPrecipRange(day.Rain.Amount.Min, day.Rain.Amount.Max, day.Rain.Amount.Units)
+				if fc.PrecipRange.Valid {
+					fc.PrecipAmount = parsePrecipRange(fc.PrecipRange.String)
 				}
 			}
 		}
@@ -181,6 +153,48 @@ func (b *BOMClient) FetchForecasts() ([]models.Forecast, string, *FetchResult, e
 	}
 
 	return forecasts, string(body), result, nil
+}
+
+func pickNarrative(shortText, extendedText *string) string {
+	if shortText != nil {
+		if s := strings.TrimSpace(*shortText); s != "" {
+			return s
+		}
+	}
+	if extendedText != nil {
+		return strings.TrimSpace(*extendedText)
+	}
+	return ""
+}
+
+func buildPrecipRange(min, max *float64, units string) sql.NullString {
+	if min == nil && max == nil {
+		return sql.NullString{}
+	}
+
+	units = strings.TrimSpace(units)
+	if units == "" {
+		units = "mm"
+	}
+
+	format := func(v *float64) string {
+		if v == nil {
+			return ""
+		}
+		return strconv.FormatFloat(*v, 'f', -1, 64)
+	}
+
+	switch {
+	case min != nil && max != nil:
+		if *min == *max {
+			return sql.NullString{String: fmt.Sprintf("%s %s", format(max), units), Valid: true}
+		}
+		return sql.NullString{String: fmt.Sprintf("%s to %s %s", format(min), format(max), units), Valid: true}
+	case max != nil:
+		return sql.NullString{String: fmt.Sprintf("%s %s", format(max), units), Valid: true}
+	default:
+		return sql.NullString{String: fmt.Sprintf("%s %s", format(min), units), Valid: true}
+	}
 }
 
 // parsePrecipRange extracts the upper bound from a BOM precipitation range string

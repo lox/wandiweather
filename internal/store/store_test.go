@@ -326,7 +326,7 @@ func TestInsertAndGetForecast(t *testing.T) {
 		TempMax:       sql.NullFloat64{Float64: 27.0, Valid: true},
 		TempMin:       sql.NullFloat64{Float64: 14.0, Valid: true},
 		PrecipRange:   sql.NullString{String: "0 to 1 mm", Valid: true},
-		LocationID:    sql.NullString{String: "VIC_PT075", Valid: true},
+		LocationID:    sql.NullString{String: "r3811m", Valid: true},
 	}
 	if err := store.InsertForecast(bomForecast); err != nil {
 		t.Fatalf("InsertForecast BOM: %v", err)
