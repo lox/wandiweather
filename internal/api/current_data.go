@@ -133,6 +133,10 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 		data.TempChangeRate = &rate.Float64
 	}
 
+	if rh, err := s.store.GetRainHistory("IWANDI23"); err == nil {
+		data.RainHistory = rh
+	}
+
 	if data.Primary != nil {
 		if data.Primary.Temp.Valid {
 			temp := data.Primary.Temp.Float64

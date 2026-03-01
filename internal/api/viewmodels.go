@@ -24,6 +24,7 @@ type CurrentData struct {
 	Inversion      *InversionStatus
 	TodayForecast  *TodayForecast
 	TodayStats     *TodayStats
+	RainHistory    *store.RainHistory
 	LastUpdated    time.Time
 	Moon           *MoonData
 	Alerts         []emergency.Alert

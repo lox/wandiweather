@@ -143,6 +143,16 @@
             color: var(--text-muted);
         }
         .observed-progress .obs-temp { color: var(--text); }
+        .rain-history {
+            display: none;
+            justify-content: center;
+            gap: 1.5rem;
+            margin-top: 0.5rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+        .rain-history.show { display: flex; }
+        .rain-history strong { color: var(--text); }
         
         .inversion {
             margin-top: 1.5rem;
@@ -197,17 +207,19 @@
         .day-low { font-size: 0.85rem; color: var(--text-muted); }
         .day-precip { font-size: 0.7rem; color: var(--accent); margin-top: 0.25rem; }
         
-        .stations-toggle {
+        .toggles {
+            display: flex;
+            justify-content: center;
+            gap: 1.5rem;
             margin-top: 1.5rem;
-            text-align: center;
             font-size: 0.8rem;
         }
-        .stations-toggle a {
+        .toggles a {
             color: var(--text-muted);
             text-decoration: none;
             cursor: pointer;
         }
-        .stations-toggle a:hover { color: var(--text); }
+        .toggles a:hover { color: var(--text); }
         
         .stations-grid {
             display: none;
@@ -271,17 +283,7 @@
             padding: 1rem;
             height: 200px;
         }
-        .chart-toggle {
-            margin-top: 1rem;
-            text-align: center;
-            font-size: 0.8rem;
-        }
-        .chart-toggle a {
-            color: var(--text-muted);
-            text-decoration: none;
-            cursor: pointer;
-        }
-        .chart-toggle a:hover { color: var(--text); }
+
         
         /* Emergency Alerts */
         .emergency-alerts {
@@ -390,6 +392,10 @@
     <script>
         function toggleStations() {
             document.getElementById('stations-grid').classList.toggle('show');
+        }
+        
+        function toggleRainHistory() {
+            document.getElementById('rain-history').classList.toggle('show');
         }
         
         function toggleChart() {

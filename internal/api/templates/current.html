@@ -128,15 +128,21 @@
 
 <div class="forecast-section" hx-get="/partials/forecast" hx-trigger="load, every 3600s" hx-swap="innerHTML"></div>
 
-<div class="chart-toggle">
+<div class="toggles">
+    {{if .RainHistory}}<a onclick="toggleRainHistory()">Show rainfall history</a>{{end}}
     <a onclick="toggleChart()">Show 24hr chart</a>
-</div>
-
-<div id="chart-section" class="chart-section" hx-get="/partials/chart" hx-trigger="revealed" hx-swap="innerHTML"></div>
-
-<div class="stations-toggle">
     <a onclick="toggleStations()">Show all stations</a>
 </div>
+
+{{if .RainHistory}}
+<div id="rain-history" class="rain-history">
+    <span>7 days: <strong>{{printf "%.1f" .RainHistory.Week}}mm</strong></span>
+    <span>30 days: <strong>{{printf "%.1f" .RainHistory.Month}}mm</strong></span>
+    <span>12 months: <strong>{{printf "%.1f" .RainHistory.Year}}mm</strong></span>
+</div>
+{{end}}
+
+<div id="chart-section" class="chart-section" hx-get="/partials/chart" hx-trigger="revealed" hx-swap="innerHTML"></div>
 
 <div id="stations-grid" class="stations-grid">
     <div class="stations-table">

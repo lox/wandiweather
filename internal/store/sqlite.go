@@ -1696,3 +1696,28 @@ func (s *Store) GetRecentIngestErrorsForDisplay(limit int) ([]RecentIngestError,
 	}
 	return results, rows.Err()
 }
+
+// RainHistory contains rainfall totals for different time periods.
+type RainHistory struct {
+	Week  float64
+	Month float64
+	Year  float64
+}
+
+// GetRainHistory returns total rainfall for the past 7 days, 30 days, and 365 days
+// from daily_summaries.
+func (s *Store) GetRainHistory(stationID string) (*RainHistory, error) {
+	result := &RainHistory{}
+	err := s.db.QueryRow(`
+		SELECT
+			COALESCE(SUM(CASE WHEN date >= date('now', '-7 days') THEN precip_total ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN date >= date('now', '-30 days') THEN precip_total ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN date >= date('now', '-365 days') THEN precip_total ELSE 0 END), 0)
+		FROM daily_summaries
+		WHERE station_id = ? AND date >= date('now', '-365 days')
+	`, stationID).Scan(&result.Week, &result.Month, &result.Year)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
