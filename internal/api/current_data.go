@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/lox/wandiweather/internal/dateutil"
 	"github.com/lox/wandiweather/internal/forecast"
 	"github.com/lox/wandiweather/internal/models"
 )
@@ -23,6 +24,13 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 	}
 
 	var valleyTemps, midTemps, upperTemps []float64
+	var primaryStationID string
+	for _, st := range stations {
+		if st.IsPrimary {
+			primaryStationID = st.StationID
+			break
+		}
+	}
 
 	for _, st := range stations {
 		data.StationMeta[st.StationID] = st
@@ -69,6 +77,7 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 
 	if len(valleyTemps) > 0 {
 		data.ValleyTemp = median(valleyTemps)
+		data.ValleyTempValid = true
 
 		if len(upperTemps) > 0 {
 			valleyAvg := avg(valleyTemps)
@@ -89,7 +98,8 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 
 	loc := s.loc
 	now := time.Now().In(loc)
-	todayDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	todayDate := dateutil.LocalDayStart(now, loc).UTC()
+	todayKey := dateutil.DateKeyUTC(todayDate)
 
 	// Add moon phase data
 	phase := forecast.GetMoonPhase(now)
@@ -100,41 +110,43 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 		Emoji:        moonEmoji(phase),
 	}
 
-	todayStats, err := s.store.GetTodayStatsExtended("IWANDI23", now)
-	if err == nil {
-		ts := &TodayStats{}
-		if todayStats.MinTemp.Valid {
-			ts.MinTemp = todayStats.MinTemp.Float64
-			ts.MinTempValid = true
+	if primaryStationID != "" {
+		todayStats, err := s.store.GetTodayStatsExtended(primaryStationID, now)
+		if err == nil {
+			ts := &TodayStats{}
+			if todayStats.MinTemp.Valid {
+				ts.MinTemp = todayStats.MinTemp.Float64
+				ts.MinTempValid = true
+			}
+			if todayStats.MaxTemp.Valid {
+				ts.MaxTemp = todayStats.MaxTemp.Float64
+				ts.MaxTempValid = true
+			}
+			if todayStats.MinTempTime.Valid {
+				ts.MinTempTime = todayStats.MinTempTime.Time.In(loc).Format("3:04 PM")
+			}
+			if todayStats.MaxTempTime.Valid {
+				ts.MaxTempTime = todayStats.MaxTempTime.Time.In(loc).Format("3:04 PM")
+			}
+			if todayStats.RainTotal.Valid && todayStats.RainTotal.Float64 > 0 {
+				ts.RainTotal = todayStats.RainTotal.Float64
+				ts.HasRain = true
+			}
+			if todayStats.MaxWind.Valid || todayStats.MaxGust.Valid {
+				ts.MaxWind = todayStats.MaxWind.Float64
+				ts.MaxGust = todayStats.MaxGust.Float64
+				ts.HasWind = true
+			}
+			data.TodayStats = ts
 		}
-		if todayStats.MaxTemp.Valid {
-			ts.MaxTemp = todayStats.MaxTemp.Float64
-			ts.MaxTempValid = true
-		}
-		if todayStats.MinTempTime.Valid {
-			ts.MinTempTime = todayStats.MinTempTime.Time.In(loc).Format("3:04 PM")
-		}
-		if todayStats.MaxTempTime.Valid {
-			ts.MaxTempTime = todayStats.MaxTempTime.Time.In(loc).Format("3:04 PM")
-		}
-		if todayStats.RainTotal.Valid && todayStats.RainTotal.Float64 > 0 {
-			ts.RainTotal = todayStats.RainTotal.Float64
-			ts.HasRain = true
-		}
-		if todayStats.MaxWind.Valid || todayStats.MaxGust.Valid {
-			ts.MaxWind = todayStats.MaxWind.Float64
-			ts.MaxGust = todayStats.MaxGust.Float64
-			ts.HasWind = true
-		}
-		data.TodayStats = ts
-	}
 
-	if rate, err := s.store.GetTempChangeRate("IWANDI23"); err == nil && rate.Valid {
-		data.TempChangeRate = &rate.Float64
-	}
+		if rate, err := s.store.GetTempChangeRate(primaryStationID); err == nil && rate.Valid {
+			data.TempChangeRate = &rate.Float64
+		}
 
-	if rh, err := s.store.GetRainHistory("IWANDI23"); err == nil {
-		data.RainHistory = rh
+		if rh, err := s.store.GetRainHistory(primaryStationID); err == nil {
+			data.RainHistory = rh
+		}
 	}
 
 	if data.Primary != nil {
@@ -154,28 +166,18 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 		nowcaster := forecast.NewNowcaster(s.store, s.loc)
 		biasCorrector := forecast.NewBiasCorrector(s.store)
 
-		var primaryStationID string
-		for _, st := range stations {
-			if st.IsPrimary {
-				primaryStationID = st.StationID
-				break
-			}
-		}
-
-		todayStr := todayDate.Format("2006-01-02")
-
 		// Find today's forecasts from both sources
 		// Prefer forecasts that have valid temp data (skip day-0 entries with NULL temps)
 		var wuForecast, bomForecast *models.Forecast
 		for _, fc := range forecasts["wu"] {
-			if fc.ValidDate.Format("2006-01-02") == todayStr && (fc.TempMax.Valid || fc.TempMin.Valid) {
+			if dateutil.DateKeyUTC(fc.ValidDate) == todayKey && (fc.TempMax.Valid || fc.TempMin.Valid) {
 				f := fc
 				wuForecast = &f
 				break
 			}
 		}
 		for _, fc := range forecasts["bom"] {
-			if fc.ValidDate.Format("2006-01-02") == todayStr && (fc.TempMax.Valid || fc.TempMin.Valid) {
+			if dateutil.DateKeyUTC(fc.ValidDate) == todayKey && (fc.TempMax.Valid || fc.TempMin.Valid) {
 				f := fc
 				bomForecast = &f
 				break

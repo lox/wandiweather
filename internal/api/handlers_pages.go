@@ -12,6 +12,13 @@ import (
 	"github.com/lox/wandiweather/internal/models"
 )
 
+func (s *Server) renderTemplate(w http.ResponseWriter, templateName string, data any) {
+	if err := s.tmpl.ExecuteTemplate(w, templateName, data); err != nil {
+		log.Printf("template %s: %v", templateName, err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+	}
+}
+
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -47,7 +54,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		WeatherOverride: r.URL.Query().Get("weather"),
 	}
 
-	s.tmpl.ExecuteTemplate(w, "index.html", indexData)
+	s.renderTemplate(w, "index.html", indexData)
 }
 
 func (s *Server) handleCurrentPartial(w http.ResponseWriter, r *http.Request) {
@@ -56,16 +63,19 @@ func (s *Server) handleCurrentPartial(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "current.html", data); err != nil {
-		log.Printf("template error: %v", err)
-	}
+	s.renderTemplate(w, "current.html", data)
 }
 
 func (s *Server) handleChartPartial(w http.ResponseWriter, r *http.Request) {
 	end := time.Now()
 	start := end.Add(-24 * time.Hour)
 
-	stations, _ := s.store.GetActiveStations()
+	stations, err := s.store.GetActiveStations()
+	if err != nil {
+		log.Printf("chart partial: get active stations: %v", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 	colors := []string{"#4fc3f7", "#81c784", "#ffb74d", "#f48fb1"}
 
 	chartData := ChartData{
@@ -74,7 +84,12 @@ func (s *Server) handleChartPartial(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for i, st := range stations {
-		obs, _ := s.store.GetObservations(st.StationID, start, end)
+		obs, err := s.store.GetObservations(st.StationID, start, end)
+		if err != nil {
+			log.Printf("chart partial: get observations %s: %v", st.StationID, err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
 		series := ChartSeries{
 			Name:  fmt.Sprintf("%s (%.0fm)", st.Name, st.Elevation),
 			Data:  make([]float64, 0),
@@ -92,7 +107,7 @@ func (s *Server) handleChartPartial(w http.ResponseWriter, r *http.Request) {
 		chartData.Series = append(chartData.Series, series)
 	}
 
-	s.tmpl.ExecuteTemplate(w, "chart.html", chartData)
+	s.renderTemplate(w, "chart.html", chartData)
 }
 
 func (s *Server) handleForecastPartial(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +116,7 @@ func (s *Server) handleForecastPartial(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.tmpl.ExecuteTemplate(w, "forecast.html", data)
+	s.renderTemplate(w, "forecast.html", data)
 }
 
 func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
@@ -151,8 +166,10 @@ func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
 
 	// Build history rows and chart data
 	type chartPoint struct {
-		wuMax, wuMin, bomMax, bomMin float64
-		hasWU, hasBOM                bool
+		wuMax  *float64
+		wuMin  *float64
+		bomMax *float64
+		bomMin *float64
 	}
 	chartData := make(map[string]*chartPoint)
 	var dates []string
@@ -194,20 +211,22 @@ func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
 		// Build chart data
 		pt := chartData[dateStr]
 		if h.Source == "wu" {
-			pt.hasWU = true
 			if h.BiasTempMax.Valid {
-				pt.wuMax = h.BiasTempMax.Float64
+				v := h.BiasTempMax.Float64
+				pt.wuMax = &v
 			}
 			if h.BiasTempMin.Valid {
-				pt.wuMin = h.BiasTempMin.Float64
+				v := h.BiasTempMin.Float64
+				pt.wuMin = &v
 			}
 		} else if h.Source == "bom" {
-			pt.hasBOM = true
 			if h.BiasTempMax.Valid {
-				pt.bomMax = h.BiasTempMax.Float64
+				v := h.BiasTempMax.Float64
+				pt.bomMax = &v
 			}
 			if h.BiasTempMin.Valid {
-				pt.bomMin = h.BiasTempMin.Float64
+				v := h.BiasTempMin.Float64
+				pt.bomMin = &v
 			}
 		}
 	}
@@ -318,10 +337,8 @@ func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.tmpl.ExecuteTemplate(w, "accuracy.html", data)
+	s.renderTemplate(w, "accuracy.html", data)
 }
-
-
 
 func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 	data := DataPageData{
@@ -367,7 +384,7 @@ func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 		data.RecentErrors = errors
 	}
 
-	s.tmpl.ExecuteTemplate(w, "data.html", data)
+	s.renderTemplate(w, "data.html", data)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

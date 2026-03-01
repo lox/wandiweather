@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lox/wandiweather/internal/dateutil"
 	"github.com/lox/wandiweather/internal/forecast"
 )
 
@@ -29,18 +30,19 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 
 	loc := s.loc
 	today := time.Now().In(loc)
-	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+	todayDate := dateutil.LocalDayStart(today, loc).UTC()
+	todayKey := dateutil.DateKeyUTC(todayDate)
 
 	dayMap := make(map[string]*ForecastDay)
 
 	for _, fc := range forecasts["wu"] {
-		key := fc.ValidDate.Format("2006-01-02")
+		key := dateutil.DateKeyUTC(fc.ValidDate)
 		if dayMap[key] == nil {
 			dayMap[key] = &ForecastDay{
 				Date:    fc.ValidDate,
 				DayName: fc.ValidDate.Weekday().String()[:3],
 				DateStr: fc.ValidDate.Format("Jan 2"),
-				IsToday: fc.ValidDate.Equal(todayDate),
+				IsToday: key == todayKey,
 			}
 		}
 		f := fc
@@ -61,13 +63,13 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 	}
 
 	for _, fc := range forecasts["bom"] {
-		key := fc.ValidDate.Format("2006-01-02")
+		key := dateutil.DateKeyUTC(fc.ValidDate)
 		if dayMap[key] == nil {
 			dayMap[key] = &ForecastDay{
 				Date:    fc.ValidDate,
 				DayName: fc.ValidDate.Weekday().String()[:3],
 				DateStr: fc.ValidDate.Format("Jan 2"),
-				IsToday: fc.ValidDate.Equal(todayDate),
+				IsToday: key == todayKey,
 			}
 		}
 		f := fc
@@ -125,7 +127,7 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 	var days []ForecastDay
 	for i := 0; i < 5; i++ {
 		date := todayDate.AddDate(0, 0, i)
-		key := date.Format("2006-01-02")
+		key := dateutil.DateKeyUTC(date)
 		if day, ok := dayMap[key]; ok {
 			if day.IsToday && primaryStationID != "" {
 				// Use shared helper for consistent temperature computation

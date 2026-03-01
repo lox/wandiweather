@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lox/wandiweather/internal/dateutil"
 	"github.com/lox/wandiweather/internal/models"
 )
 
@@ -174,7 +175,7 @@ func (s *Store) ComputeDailySummary(stationID string, date time.Time) (*models.D
 	nightEnd := time.Date(y, m, d, 6, 0, 0, 0, loc).UTC()      // 6am
 
 	eveningStart := time.Date(y, m, d-1, 18, 0, 0, 0, loc).UTC() // 6pm previous day
-	eveningEnd := localDate.UTC()                                 // midnight
+	eveningEnd := localDate.UTC()                                // midnight
 
 	afternoonStart := time.Date(y, m, d, 12, 0, 0, 0, loc).UTC()
 	afternoonEnd := time.Date(y, m, d, 18, 0, 0, 0, loc).UTC()
@@ -531,7 +532,7 @@ func (s *Store) GetMiddayTempByTier(date time.Time) (map[string]float64, error) 
 }
 
 func (s *Store) GetForecastsForDate(validDate time.Time) ([]models.Forecast, error) {
-	dateStr := validDate.Format("2006-01-02")
+	dateStr := dateutil.DateKeyUTC(validDate)
 	rows, err := s.db.Query(`
 		SELECT id, source, fetched_at, valid_date, day_of_forecast, temp_max, temp_min, humidity, precip_chance, precip_amount, wind_speed, wind_dir, narrative
 		FROM forecasts
@@ -556,11 +557,11 @@ func (s *Store) GetForecastsForDate(validDate time.Time) ([]models.Forecast, err
 
 // GetVerificationForecasts returns the earliest forecast for each (source, day_of_forecast) combination
 // that was fetched before the valid date started. This ensures we verify against advance predictions,
-// not same-day adjustments, and captures complete data (e.g., BOM min temps before they're dropped).
+// not same-day adjustments, while keeping partial-but-useful rows.
 func (s *Store) GetVerificationForecasts(validDate time.Time) ([]models.Forecast, error) {
-	dateStr := validDate.Format("2006-01-02")
+	dateStr := dateutil.DateKeyUTC(validDate)
 	// Cut-off: start of valid date in local time, converted to UTC for comparison
-	cutoff := time.Date(validDate.Year(), validDate.Month(), validDate.Day(), 0, 0, 0, 0, s.loc).UTC()
+	cutoff := dateutil.LocalDayStart(validDate, s.loc).UTC()
 
 	rows, err := s.db.Query(`
 		SELECT f.id, f.source, f.fetched_at, f.valid_date, f.day_of_forecast, 
@@ -572,9 +573,16 @@ func (s *Store) GetVerificationForecasts(validDate time.Time) ([]models.Forecast
 			FROM forecasts
 			WHERE SUBSTR(valid_date, 1, 10) = ?
 			  AND fetched_at < ?
-			  AND temp_max IS NOT NULL
+			  AND (
+				  temp_max IS NOT NULL OR
+				  temp_min IS NOT NULL OR
+				  humidity IS NOT NULL OR
+				  precip_chance IS NOT NULL OR
+				  precip_amount IS NOT NULL OR
+				  wind_speed IS NOT NULL
+			  )
 			GROUP BY source, day_of_forecast
-		) sel ON f.source = sel.source 
+		) sel ON f.source = sel.source
 		     AND f.day_of_forecast = sel.day_of_forecast 
 		     AND f.fetched_at = sel.first_fetch
 		WHERE SUBSTR(f.valid_date, 1, 10) = ?
@@ -641,7 +649,7 @@ func (s *Store) InsertForecastVerification(v models.ForecastVerification) error 
 
 func (s *Store) HasVerificationForDate(validDate time.Time) (bool, error) {
 	var count int
-	dateStr := validDate.Format("2006-01-02")
+	dateStr := dateutil.DateKeyUTC(validDate)
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM forecast_verification WHERE SUBSTR(valid_date, 1, 10) = ?`, dateStr).Scan(&count)
 	return count > 0, err
 }
@@ -1208,8 +1216,6 @@ func (s *Store) GetMorningObservations(stationID string, date time.Time) ([]mode
 
 	return s.GetObservations(stationID, morningStart.UTC(), morningEnd.UTC())
 }
-
-
 
 func (s *Store) GetCorrectionStatsForRegime(source, target string, dayOfForecast int, regime string) (*CorrectionStats, error) {
 	row := s.db.QueryRow(`

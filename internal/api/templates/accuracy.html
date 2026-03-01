@@ -390,8 +390,8 @@
     (function() {
         const ctx = document.getElementById('biasChart').getContext('2d');
         const labels = [{{range $i, $l := .ChartLabels}}{{if $i}},{{end}}"{{$l}}"{{end}}];
-        const wuData = [{{range $i, $v := .ChartWUMax}}{{if $i}},{{end}}{{printf "%.1f" $v}}{{end}}];
-        const bomData = [{{range $i, $v := .ChartBOMMax}}{{if $i}},{{end}}{{printf "%.1f" $v}}{{end}}];
+        const wuData = [{{range $i, $v := .ChartWUMax}}{{if $i}},{{end}}{{if $v}}{{printf "%.1f" (deref $v)}}{{else}}null{{end}}{{end}}];
+        const bomData = [{{range $i, $v := .ChartBOMMax}}{{if $i}},{{end}}{{if $v}}{{printf "%.1f" (deref $v)}}{{else}}null{{end}}{{end}}];
         
         new Chart(ctx, {
             type: 'bar',
@@ -426,6 +426,9 @@
                     tooltip: {
                         callbacks: {
                             label: function(context) {
+                                if (context.raw === null || context.raw === undefined) {
+                                    return context.dataset.label + ': no data';
+                                }
                                 return context.dataset.label + ': ' + (context.raw > 0 ? '+' : '') + context.raw.toFixed(1) + '°C';
                             }
                         }

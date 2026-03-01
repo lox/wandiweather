@@ -11,25 +11,26 @@ import (
 
 // CurrentData contains all the data needed to render the current conditions view.
 type CurrentData struct {
-	Primary        *models.Observation
-	ValleyTemp     float64
-	TempChangeRate *float64
-	FeelsLike      *float64
-	Stations       map[string]*models.Observation
-	StationMeta    map[string]models.Station
-	AllStations    []StationReading
-	ValleyFloor    []StationReading
-	MidSlope       []StationReading
-	Upper          []StationReading
-	Inversion      *InversionStatus
-	TodayForecast  *TodayForecast
-	TodayStats     *TodayStats
-	RainHistory    *store.RainHistory
-	LastUpdated    time.Time
-	Moon           *MoonData
-	Alerts         []emergency.Alert
-	UrgentAlerts   []emergency.Alert
-	FireDanger     *firedanger.DayForecast
+	Primary         *models.Observation
+	ValleyTemp      float64
+	ValleyTempValid bool
+	TempChangeRate  *float64
+	FeelsLike       *float64
+	Stations        map[string]*models.Observation
+	StationMeta     map[string]models.Station
+	AllStations     []StationReading
+	ValleyFloor     []StationReading
+	MidSlope        []StationReading
+	Upper           []StationReading
+	Inversion       *InversionStatus
+	TodayForecast   *TodayForecast
+	TodayStats      *TodayStats
+	RainHistory     *store.RainHistory
+	LastUpdated     time.Time
+	Moon            *MoonData
+	Alerts          []emergency.Alert
+	UrgentAlerts    []emergency.Alert
+	FireDanger      *firedanger.DayForecast
 }
 
 // MoonData contains moon phase information for display.
@@ -138,10 +139,10 @@ type AccuracyData struct {
 	UniqueDays     int
 	History        []VerificationRow
 	ChartLabels    []string
-	ChartWUMax     []float64
-	ChartWUMin     []float64
-	ChartBOMMax    []float64
-	ChartBOMMin    []float64
+	ChartWUMax     []*float64
+	ChartWUMin     []*float64
+	ChartBOMMax    []*float64
+	ChartBOMMin    []*float64
 	LeadTimeData   []LeadTimeRow
 	RegimeStats    []RegimeRow
 	RainStats      []RainStatsDisplay

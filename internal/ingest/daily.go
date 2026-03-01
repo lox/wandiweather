@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"sort"
 	"time"
 
+	"github.com/lox/wandiweather/internal/dateutil"
 	"github.com/lox/wandiweather/internal/forecast"
 	"github.com/lox/wandiweather/internal/models"
 	"github.com/lox/wandiweather/internal/store"
@@ -305,11 +307,35 @@ func (d *DailyJobs) BackfillSummaries() error {
 		return nil
 	}
 
-	log.Printf("daily: found %d active stations, using %s for date range", len(stations), stations[0].StationID)
+	dateSet := make(map[string]time.Time)
+	for _, station := range stations {
+		dates, err := d.store.GetObservationDates(station.StationID)
+		if err != nil {
+			return fmt.Errorf("observation dates for %s: %w", station.StationID, err)
+		}
+		for _, date := range dates {
+			dateSet[dateutil.DateKeyUTC(date)] = date
+		}
+	}
 
-	dates, err := d.store.GetObservationDates(stations[0].StationID)
-	if err != nil {
-		return err
+	if len(dateSet) == 0 {
+		log.Println("daily: no observation dates found for active stations")
+		return nil
+	}
+
+	dateKeys := make([]string, 0, len(dateSet))
+	for key := range dateSet {
+		dateKeys = append(dateKeys, key)
+	}
+	sort.Strings(dateKeys)
+
+	dates := make([]time.Time, 0, len(dateKeys))
+	for _, key := range dateKeys {
+		date, err := dateutil.ParseDateKey(key)
+		if err != nil {
+			return fmt.Errorf("parse date key %s: %w", key, err)
+		}
+		dates = append(dates, date)
 	}
 
 	log.Printf("daily: found %d dates to backfill", len(dates))

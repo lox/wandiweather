@@ -6,13 +6,8 @@
     <div class="forecast-day{{if .IsToday}} today{{end}}">
         <div class="day-name">{{if .IsToday}}Today{{else}}{{.DayName}}{{end}}</div>
         <div class="day-temps">
-            {{if .WU}}
-            <div class="day-high">{{if .DisplayMax}}{{printf "%.0f" (deref .DisplayMax)}}°{{else if .WUCorrectedMax}}{{printf "%.0f" (deref .WUCorrectedMax)}}°{{else if .WU.TempMax.Valid}}{{printf "%.0f" .WU.TempMax.Float64}}°{{else}}—{{end}}</div>
-            <div class="day-low">{{if .DisplayMin}}{{printf "%.0f" (deref .DisplayMin)}}°{{else if .WUCorrectedMin}}{{printf "%.0f" (deref .WUCorrectedMin)}}°{{else if .WU.TempMin.Valid}}{{printf "%.0f" .WU.TempMin.Float64}}°{{else}}—{{end}}</div>
-            {{else}}
-            <div class="day-high">—</div>
-            <div class="day-low">—</div>
-            {{end}}
+            <div class="day-high">{{if .DisplayMax}}{{printf "%.0f" (deref .DisplayMax)}}°{{else if .WUCorrectedMax}}{{printf "%.0f" (deref .WUCorrectedMax)}}°{{else if .BOMCorrectedMax}}{{printf "%.0f" (deref .BOMCorrectedMax)}}°{{else if and .WU .WU.TempMax.Valid}}{{printf "%.0f" .WU.TempMax.Float64}}°{{else if and .BOM .BOM.TempMax.Valid}}{{printf "%.0f" .BOM.TempMax.Float64}}°{{else}}—{{end}}</div>
+            <div class="day-low">{{if .DisplayMin}}{{printf "%.0f" (deref .DisplayMin)}}°{{else if .WUCorrectedMin}}{{printf "%.0f" (deref .WUCorrectedMin)}}°{{else if .BOMCorrectedMin}}{{printf "%.0f" (deref .BOMCorrectedMin)}}°{{else if and .WU .WU.TempMin.Valid}}{{printf "%.0f" .WU.TempMin.Float64}}°{{else if and .BOM .BOM.TempMin.Valid}}{{printf "%.0f" .BOM.TempMin.Float64}}°{{else}}—{{end}}</div>
         </div>
         {{if .WU}}{{if .WU.PrecipChance.Valid}}{{if gt .WU.PrecipChance.Int64 10}}
         <div class="day-precip">💧{{.WU.PrecipChance.Int64}}%</div>

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lox/wandiweather/internal/dateutil"
 	"github.com/lox/wandiweather/internal/emergency"
 	"github.com/lox/wandiweather/internal/firedanger"
 	"github.com/lox/wandiweather/internal/forecast"
@@ -100,7 +101,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 	// Daily jobs at 6am
 	s.cron.AddFunc("0 6 * * *", func() {
 		log.Println("scheduler: 6am daily jobs")
-		yesterday := time.Now().In(s.loc).AddDate(0, 0, -1)
+		yesterday := s.dailyTargetDate(time.Now())
 		s.daily.RunAll(yesterday)
 	})
 
@@ -135,18 +136,33 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 }
 
-
-
 func (s *Scheduler) ingestForecasts() {
 	if s.forecast == nil {
 		return
 	}
 
 	geocode := fmt.Sprintf("%.4f,%.4f", s.forecast.lat, s.forecast.lon)
+	wuForecasts := s.ingestForecastSource("wu", "WU", "forecast/daily/5day", &geocode, s.forecast.Fetch5Day)
 
-	log.Println("scheduler: ingesting WU forecasts")
-	run, _ := s.store.StartIngestRun("wu", "forecast/daily/5day", nil, &geocode)
-	forecasts, rawBody, fetchResult, err := s.forecast.Fetch5Day()
+	if s.bom != nil {
+		bomEndpoint := s.bom.Endpoint()
+		bomLocationID := s.bom.locationID
+		s.ingestForecastSource("bom", "BOM", bomEndpoint, &bomLocationID, s.bom.FetchForecasts)
+	}
+
+	s.ensureWeatherImage(wuForecasts)
+}
+
+func (s *Scheduler) ingestForecastSource(
+	source string,
+	label string,
+	endpoint string,
+	locationID *string,
+	fetch func() ([]models.Forecast, string, *FetchResult, error),
+) []models.Forecast {
+	log.Printf("scheduler: ingesting %s forecasts", label)
+	run, _ := s.store.StartIngestRun(source, endpoint, nil, locationID)
+	forecasts, rawBody, fetchResult, err := fetch()
 
 	if run != nil {
 		run.Success = err == nil
@@ -157,7 +173,7 @@ func (s *Scheduler) ingestForecasts() {
 			if fetchResult.ParseErrors > 0 {
 				run.ParseErrors = sql.NullInt64{Int64: int64(fetchResult.ParseErrors), Valid: true}
 				run.ErrorMessage = sql.NullString{String: fetchResult.ParseError, Valid: true}
-				log.Printf("scheduler: WU forecast parse errors: %s", fetchResult.ParseError)
+				log.Printf("scheduler: %s forecast parse errors: %s", label, fetchResult.ParseError)
 			}
 		}
 		if err != nil {
@@ -166,23 +182,23 @@ func (s *Scheduler) ingestForecasts() {
 	}
 
 	if len(rawBody) > 0 && run != nil {
-		if _, err := s.store.StoreRawPayload(&run.ID, "wu", "forecast/daily/5day", nil, &geocode, []byte(rawBody)); err != nil {
-			log.Printf("scheduler: store WU raw payload: %v", err)
+		if _, err := s.store.StoreRawPayload(&run.ID, source, endpoint, nil, locationID, []byte(rawBody)); err != nil {
+			log.Printf("scheduler: store %s raw payload: %v", label, err)
 		}
 	}
 
 	if err != nil {
-		log.Printf("scheduler: fetch WU forecast: %v", err)
+		log.Printf("scheduler: fetch %s forecast: %v", label, err)
 	} else {
 		inserted := 0
 		for _, fc := range forecasts {
 			if err := s.store.InsertForecast(fc); err != nil {
-				log.Printf("scheduler: insert WU forecast: %v", err)
+				log.Printf("scheduler: insert %s forecast: %v", label, err)
 				continue
 			}
 			inserted++
 		}
-		log.Printf("scheduler: inserted %d WU forecast days", inserted)
+		log.Printf("scheduler: inserted %d %s forecast days", inserted, label)
 		if run != nil {
 			run.RecordsStored = sql.NullInt64{Int64: int64(inserted), Valid: true}
 		}
@@ -192,57 +208,10 @@ func (s *Scheduler) ingestForecasts() {
 		s.store.CompleteIngestRun(run)
 	}
 
-	if s.bom != nil {
-		log.Println("scheduler: ingesting BOM forecasts")
-		bomRun, _ := s.store.StartIngestRun("bom", "forecast/fwo", nil, &s.bom.areaCode)
-		bomForecasts, bomRawBody, bomFetchResult, err := s.bom.FetchForecasts()
-
-		if bomRun != nil {
-			bomRun.Success = err == nil
-			if bomFetchResult != nil {
-				bomRun.HTTPStatus = sql.NullInt64{Int64: int64(bomFetchResult.HTTPStatus), Valid: bomFetchResult.HTTPStatus > 0}
-				bomRun.ResponseSizeBytes = sql.NullInt64{Int64: int64(bomFetchResult.ResponseSize), Valid: bomFetchResult.ResponseSize > 0}
-				bomRun.RecordsParsed = sql.NullInt64{Int64: int64(bomFetchResult.RecordCount), Valid: true}
-				if bomFetchResult.ParseErrors > 0 {
-					bomRun.ParseErrors = sql.NullInt64{Int64: int64(bomFetchResult.ParseErrors), Valid: true}
-					bomRun.ErrorMessage = sql.NullString{String: bomFetchResult.ParseError, Valid: true}
-					log.Printf("scheduler: BOM forecast parse errors: %s", bomFetchResult.ParseError)
-				}
-			}
-			if err != nil {
-				bomRun.ErrorMessage = sql.NullString{String: err.Error(), Valid: true}
-			}
-		}
-
-		if len(bomRawBody) > 0 && bomRun != nil {
-			if _, err := s.store.StoreRawPayload(&bomRun.ID, "bom", "forecast/fwo", nil, &s.bom.areaCode, []byte(bomRawBody)); err != nil {
-				log.Printf("scheduler: store BOM raw payload: %v", err)
-			}
-		}
-
-		if err != nil {
-			log.Printf("scheduler: fetch BOM forecast: %v", err)
-		} else {
-			inserted := 0
-			for _, fc := range bomForecasts {
-				if err := s.store.InsertForecast(fc); err != nil {
-					log.Printf("scheduler: insert BOM forecast: %v", err)
-					continue
-				}
-				inserted++
-			}
-			log.Printf("scheduler: inserted %d BOM forecast days", inserted)
-			if bomRun != nil {
-				bomRun.RecordsStored = sql.NullInt64{Int64: int64(inserted), Valid: true}
-			}
-		}
-
-		if bomRun != nil {
-			s.store.CompleteIngestRun(bomRun)
-		}
+	if err != nil {
+		return nil
 	}
-
-	s.ensureWeatherImage(forecasts)
+	return forecasts
 }
 
 // checkWeatherImage checks if the current time-of-day image is cached and generates if needed.
@@ -274,13 +243,13 @@ func (s *Scheduler) ensureWeatherImage(forecasts []models.Forecast) {
 	}
 
 	now := time.Now().In(s.loc)
-	todayDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	todayKey := dateutil.DateKeyUTC(dateutil.LocalDayStart(now, s.loc))
 	tod := forecast.GetTimeOfDay(now)
 
 	// Find today's forecast
 	var todayForecast *models.Forecast
 	for i := range forecasts {
-		if forecasts[i].ValidDate.Format("2006-01-02") == todayDate.Format("2006-01-02") {
+		if dateutil.DateKeyUTC(forecasts[i].ValidDate) == todayKey {
 			todayForecast = &forecasts[i]
 			break
 		}
@@ -489,8 +458,12 @@ func (s *Scheduler) BackfillHistory7Day() error {
 }
 
 func (s *Scheduler) RunDailyJobs() error {
-	yesterday := time.Now().AddDate(0, 0, -1)
+	yesterday := s.dailyTargetDate(time.Now())
 	return s.daily.RunAll(yesterday)
+}
+
+func (s *Scheduler) dailyTargetDate(now time.Time) time.Time {
+	return now.In(s.loc).AddDate(0, 0, -1)
 }
 
 func (s *Scheduler) BackfillDailySummaries() error {

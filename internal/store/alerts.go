@@ -16,10 +16,18 @@ func (s *Store) UpsertAlert(alert emergency.Alert, now time.Time) error {
 			first_seen_at, last_seen_at, created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
+			category = excluded.category,
+			subcategory = excluded.subcategory,
 			status = excluded.status,
 			name = excluded.name,
+			location = excluded.location,
+			distance_km = excluded.distance_km,
+			severity = excluded.severity,
+			lat = excluded.lat,
+			lon = excluded.lon,
 			headline = excluded.headline,
 			body = excluded.body,
+			url = excluded.url,
 			last_seen_at = excluded.last_seen_at,
 			updated_at = excluded.updated_at
 	`,
