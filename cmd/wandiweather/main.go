@@ -20,14 +20,15 @@ import (
 )
 
 var cli struct {
-	DB           string `name:"db" default:"data/wandiweather.db" help:"Path to SQLite database."`
-	Port         string `name:"port" default:"8080" env:"PORT" help:"HTTP server port."`
-	NoPoll       bool   `name:"no-poll" help:"Disable polling (server only, for local dev)."`
-	Once         bool   `name:"once" help:"Ingest once and exit (for testing)."`
-	Backfill     bool   `name:"backfill" help:"Backfill 7-day observation history."`
-	Daily        bool   `name:"daily" help:"Run daily jobs (summaries + verification) and exit."`
-	BackfillDaily bool  `name:"backfill-daily" help:"Backfill all daily summaries and verification."`
-	PWSApiKey    string `name:"pws-api-key" env:"PWS_API_KEY" required:"" help:"Weather Underground API key."`
+	DB            string `name:"db" default:"data/wandiweather.db" help:"Path to SQLite database."`
+	Port          string `name:"port" default:"8080" env:"PORT" help:"HTTP server port."`
+	NoPoll        bool   `name:"no-poll" help:"Disable polling (server only, for local dev)."`
+	Once          bool   `name:"once" help:"Ingest once and exit (for testing)."`
+	Backfill      bool   `name:"backfill" help:"Backfill 7-day observation history."`
+	Daily         bool   `name:"daily" help:"Run daily jobs (summaries + verification) and exit."`
+	BackfillDaily bool   `name:"backfill-daily" help:"Backfill all daily summaries and verification."`
+	EnablePprof   bool   `name:"enable-pprof" env:"ENABLE_PPROF" help:"Expose /debug/pprof endpoints (disabled by default)."`
+	PWSApiKey     string `name:"pws-api-key" env:"PWS_API_KEY" required:"" help:"Weather Underground API key."`
 }
 
 var defaultStations = []models.Station{
@@ -38,17 +39,20 @@ var defaultStations = []models.Station{
 	{StationID: "IHARRI19", Name: "Harrietville", Latitude: -36.9, Longitude: 147.053, Elevation: 543, ElevationTier: "upper", IsPrimary: false, Active: true},
 }
 
-var stationIDs = []string{
-	"IWANDI23",  // Primary station (valley floor)
-	"IWANDI25",  // Shade reference (valley floor)
-	"IBRIGH180", // Bright (valley floor)
-	"IHARRI19",  // Harrietville (upper, for inversion detection)
-}
-
 const (
 	wandiligongLat = -36.794
 	wandiligongLon = 146.977
 )
+
+func activeStationIDs(stations []models.Station) []string {
+	ids := make([]string, 0, len(stations))
+	for _, station := range stations {
+		if station.Active {
+			ids = append(ids, station.StationID)
+		}
+	}
+	return ids
+}
 
 func init() {
 	_ = godotenv.Load() // Load .env if present, ignore error if missing
@@ -95,8 +99,13 @@ func main() {
 
 	pws := ingest.NewPWS(cli.PWSApiKey)
 	forecast := ingest.NewForecastClient(cli.PWSApiKey, wandiligongLat, wandiligongLon)
+	stationIDs := activeStationIDs(defaultStations)
 	scheduler := ingest.NewScheduler(st, pws, forecast, stationIDs, loc)
 	server := api.NewServer(st, cli.Port, loc)
+	server.SetDebugRoutesEnabled(cli.EnablePprof)
+	if cli.EnablePprof {
+		log.Println("debug pprof endpoints enabled at /debug/pprof/")
+	}
 
 	// Configure image generation for weather banners, sharing mutex with server
 	if gen := server.ImageGenerator(); gen != nil {

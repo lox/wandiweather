@@ -19,15 +19,16 @@ import (
 
 // Server is the HTTP server for the weather API.
 type Server struct {
-	store           *store.Store
-	port            string
-	loc             *time.Location
-	tmpl            *template.Template
-	imageCache      *imagegen.Cache
-	imageGen        *imagegen.Generator
-	genMu           sync.Mutex // Prevents concurrent generation of same image
-	emergencyClient *emergency.Client
-	ogImageCache    *imagegen.OGImageCache
+	store              *store.Store
+	port               string
+	loc                *time.Location
+	tmpl               *template.Template
+	debugRoutesEnabled bool
+	imageCache         *imagegen.Cache
+	imageGen           *imagegen.Generator
+	genMu              sync.Mutex // Prevents concurrent generation of same image
+	emergencyClient    *emergency.Client
+	ogImageCache       *imagegen.OGImageCache
 }
 
 // NewServer creates a new Server instance.
@@ -78,6 +79,11 @@ func (s *Server) EmergencyClient() *emergency.Client {
 	return s.emergencyClient
 }
 
+// SetDebugRoutesEnabled controls whether /debug/pprof endpoints are mounted.
+func (s *Server) SetDebugRoutesEnabled(enabled bool) {
+	s.debugRoutesEnabled = enabled
+}
+
 // Handler returns the HTTP handler with all routes registered.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -106,10 +112,12 @@ func (s *Server) Handler() http.Handler {
 
 	// Metrics and debugging
 	mux.Handle("/metrics", promhttp.Handler())
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/heap", pprof.Handler("heap").ServeHTTP)
-	mux.HandleFunc("/debug/pprof/goroutine", pprof.Handler("goroutine").ServeHTTP)
-	mux.HandleFunc("/debug/pprof/allocs", pprof.Handler("allocs").ServeHTTP)
+	if s.debugRoutesEnabled {
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/heap", pprof.Handler("heap").ServeHTTP)
+		mux.HandleFunc("/debug/pprof/goroutine", pprof.Handler("goroutine").ServeHTTP)
+		mux.HandleFunc("/debug/pprof/allocs", pprof.Handler("allocs").ServeHTTP)
+	}
 
 	return mux
 }

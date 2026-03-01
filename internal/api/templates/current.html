@@ -26,7 +26,7 @@
 
 <!-- NOW: Current conditions -->
 <div class="hero">
-    {{if gt .ValleyTemp 0.0}}
+    {{if .ValleyTempValid}}
     <div class="temp-now">{{printf "%.0f" .ValleyTemp}}<span class="unit">°</span></div>
     {{if .TempChangeRate}}
     <div class="temp-trend {{if gt (deref .TempChangeRate) 0.0}}rising{{else}}falling{{end}}">
@@ -64,7 +64,7 @@
         {{if .TodayForecast.HasPrecip}}
         <div class="range-item">
             <span class="range-value rain">{{.TodayForecast.PrecipChance}}%</span>
-            <span class="range-label">Rain</span>
+            <span class="range-label">Rain{{with .TodayForecast.PrecipDisplay}} · {{.}}{{end}}</span>
         </div>
         {{end}}
     </div>
