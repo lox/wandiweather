@@ -20,14 +20,14 @@ import (
 )
 
 var cli struct {
-	DB           string `name:"db" default:"data/wandiweather.db" help:"Path to SQLite database."`
-	Port         string `name:"port" default:"8080" env:"PORT" help:"HTTP server port."`
-	NoPoll       bool   `name:"no-poll" help:"Disable polling (server only, for local dev)."`
-	Once         bool   `name:"once" help:"Ingest once and exit (for testing)."`
-	Backfill     bool   `name:"backfill" help:"Backfill 7-day observation history."`
-	Daily        bool   `name:"daily" help:"Run daily jobs (summaries + verification) and exit."`
-	BackfillDaily bool  `name:"backfill-daily" help:"Backfill all daily summaries and verification."`
-	PWSApiKey    string `name:"pws-api-key" env:"PWS_API_KEY" required:"" help:"Weather Underground API key."`
+	DB            string `name:"db" default:"data/wandiweather.db" help:"Path to SQLite database."`
+	Port          string `name:"port" default:"8080" env:"PORT" help:"HTTP server port."`
+	NoPoll        bool   `name:"no-poll" help:"Disable polling (server only, for local dev)."`
+	Once          bool   `name:"once" help:"Ingest once and exit (for testing)."`
+	Backfill      bool   `name:"backfill" help:"Backfill 7-day observation history."`
+	Daily         bool   `name:"daily" help:"Run daily jobs (summaries + verification) and exit."`
+	BackfillDaily bool   `name:"backfill-daily" help:"Backfill all daily summaries and verification."`
+	PWSApiKey     string `name:"pws-api-key" env:"PWS_API_KEY" required:"" help:"Weather Underground API key."`
 }
 
 var defaultStations = []models.Station{
@@ -35,14 +35,15 @@ var defaultStations = []models.Station{
 	{StationID: "IWANDI25", Name: "Wandiligong (Shade)", Latitude: -36.794, Longitude: 146.977, Elevation: 386, ElevationTier: "valley_floor", IsPrimary: false, Active: true},
 	{StationID: "IBRIGH180", Name: "Bright", Latitude: -36.729, Longitude: 146.968, Elevation: 313, ElevationTier: "valley_floor", IsPrimary: false, Active: true},
 	{StationID: "IVICTORI162", Name: "Wandiligong", Latitude: -36.757, Longitude: 146.986, Elevation: 392, ElevationTier: "valley_floor", IsPrimary: false, Active: false},
-	{StationID: "IHARRI19", Name: "Harrietville", Latitude: -36.9, Longitude: 147.053, Elevation: 543, ElevationTier: "upper", IsPrimary: false, Active: true},
+	{StationID: "IHARRI6", Name: "Harrietville", Latitude: -36.900, Longitude: 147.057, Elevation: 520, ElevationTier: "upper", IsPrimary: false, Active: true},
+	{StationID: "IHARRI19", Name: "Harrietville", Latitude: -36.9, Longitude: 147.053, Elevation: 543, ElevationTier: "upper", IsPrimary: false, Active: false},
 }
 
 var stationIDs = []string{
 	"IWANDI23",  // Primary station (valley floor)
 	"IWANDI25",  // Shade reference (valley floor)
 	"IBRIGH180", // Bright (valley floor)
-	"IHARRI19",  // Harrietville (upper, for inversion detection)
+	"IHARRI6",   // Harrietville (upper, for inversion detection)
 }
 
 const (

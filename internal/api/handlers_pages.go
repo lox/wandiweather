@@ -321,8 +321,6 @@ func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
 	s.tmpl.ExecuteTemplate(w, "accuracy.html", data)
 }
 
-
-
 func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 	data := DataPageData{
 		UpdatedAt: time.Now().In(s.loc).Format("Jan 2, 3:04 PM"),
@@ -383,7 +381,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		Stations: make([]StationHealth, 0, len(stations)),
 	}
 
-	staleThreshold := 60 * time.Minute
 	now := time.Now()
 
 	for _, st := range stations {
@@ -397,13 +394,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		if obs != nil {
 			sh.LastSeen = obs.ObservedAt
 			sh.AgeMinutes = int(now.Sub(obs.ObservedAt).Minutes())
-			sh.Stale = now.Sub(obs.ObservedAt) > staleThreshold
+			sh.Stale = observationIsStale(obs, now)
 		} else {
 			sh.Stale = true
 			sh.AgeMinutes = -1
 		}
 
-		if sh.Stale {
+		if st.IsPrimary && sh.Stale {
 			health.Status = "degraded"
 		}
 		health.Stations = append(health.Stations, sh)

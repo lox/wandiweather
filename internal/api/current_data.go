@@ -10,6 +10,15 @@ import (
 	"github.com/lox/wandiweather/internal/models"
 )
 
+var staleObservationThreshold = 60 * time.Minute
+
+func observationIsStale(obs *models.Observation, now time.Time) bool {
+	if obs == nil {
+		return true
+	}
+	return now.Sub(obs.ObservedAt) > staleObservationThreshold
+}
+
 // getCurrentData aggregates all current weather data for display.
 func (s *Server) getCurrentData() (*CurrentData, error) {
 	stations, err := s.store.GetActiveStations()
@@ -22,6 +31,7 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 		StationMeta: make(map[string]models.Station),
 	}
 
+	now := time.Now()
 	var valleyTemps, midTemps, upperTemps []float64
 
 	for _, st := range stations {
@@ -34,11 +44,19 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 		if obs == nil {
 			continue
 		}
+
+		if st.IsPrimary {
+			data.LastUpdated = obs.ObservedAt.In(s.loc)
+		}
+
+		if observationIsStale(obs, now) {
+			continue
+		}
+
 		data.Stations[st.StationID] = obs
 
 		if st.IsPrimary {
 			data.Primary = obs
-			data.LastUpdated = obs.ObservedAt.In(s.loc)
 		}
 
 		reading := StationReading{Station: st, Obs: obs}
@@ -88,7 +106,7 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 	}
 
 	loc := s.loc
-	now := time.Now().In(loc)
+	now = now.In(loc)
 	todayDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
 	// Add moon phase data
