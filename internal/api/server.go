@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lox/wandiweather/internal/ecowitt"
 	"github.com/lox/wandiweather/internal/emergency"
 	"github.com/lox/wandiweather/internal/imagegen"
 	"github.com/lox/wandiweather/internal/store"
@@ -17,12 +18,17 @@ import (
 	_ "github.com/lox/wandiweather/internal/metrics" // Register metrics
 )
 
+type airQualityProvider interface {
+	CurrentAirQuality() (*ecowitt.AirQualityReading, error)
+}
+
 // Server is the HTTP server for the weather API.
 type Server struct {
 	store           *store.Store
 	port            string
 	loc             *time.Location
 	tmpl            *template.Template
+	airQuality      airQualityProvider
 	imageCache      *imagegen.Cache
 	imageGen        *imagegen.Generator
 	genMu           sync.Mutex // Prevents concurrent generation of same image
@@ -31,7 +37,7 @@ type Server struct {
 }
 
 // NewServer creates a new Server instance.
-func NewServer(store *store.Store, port string, loc *time.Location) *Server {
+func NewServer(store *store.Store, port string, loc *time.Location, airQuality airQualityProvider) *Server {
 	tmpl := newTemplates()
 
 	// Initialize image generator (optional - may not have API key)
@@ -50,6 +56,7 @@ func NewServer(store *store.Store, port string, loc *time.Location) *Server {
 		port:            port,
 		loc:             loc,
 		tmpl:            tmpl,
+		airQuality:      airQuality,
 		imageCache:      imagegen.NewCache("data/images"),
 		imageGen:        imageGen,
 		emergencyClient: emergencyClient,
@@ -95,6 +102,7 @@ func (s *Server) Handler() http.Handler {
 
 	// API endpoints
 	mux.HandleFunc("/api/current", s.handleAPICurrent)
+	mux.HandleFunc("/api/air-quality", s.handleAPIAirQuality)
 	mux.HandleFunc("/api/history", s.handleAPIHistory)
 	mux.HandleFunc("/api/stations", s.handleAPIStations)
 	mux.HandleFunc("/api/forecast", s.handleAPIForecast)

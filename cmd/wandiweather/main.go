@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -13,6 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/lox/wandiweather/internal/api"
+	"github.com/lox/wandiweather/internal/ecowitt"
 	"github.com/lox/wandiweather/internal/firedanger"
 	"github.com/lox/wandiweather/internal/ingest"
 	"github.com/lox/wandiweather/internal/models"
@@ -20,14 +22,18 @@ import (
 )
 
 var cli struct {
-	DB            string `name:"db" default:"data/wandiweather.db" help:"Path to SQLite database."`
-	Port          string `name:"port" default:"8080" env:"PORT" help:"HTTP server port."`
-	NoPoll        bool   `name:"no-poll" help:"Disable polling (server only, for local dev)."`
-	Once          bool   `name:"once" help:"Ingest once and exit (for testing)."`
-	Backfill      bool   `name:"backfill" help:"Backfill 7-day observation history."`
-	Daily         bool   `name:"daily" help:"Run daily jobs (summaries + verification) and exit."`
-	BackfillDaily bool   `name:"backfill-daily" help:"Backfill all daily summaries and verification."`
-	PWSApiKey     string `name:"pws-api-key" env:"PWS_API_KEY" required:"" help:"Weather Underground API key."`
+	DB                     string `name:"db" default:"data/wandiweather.db" help:"Path to SQLite database."`
+	Port                   string `name:"port" default:"8080" env:"PORT" help:"HTTP server port."`
+	NoPoll                 bool   `name:"no-poll" help:"Disable polling (server only, for local dev)."`
+	Once                   bool   `name:"once" help:"Ingest once and exit (for testing)."`
+	Backfill               bool   `name:"backfill" help:"Backfill 7-day observation history."`
+	AirQualityBackfillDays int    `name:"air-quality-backfill-days" default:"0" help:"Backfill Ecowitt air quality history for the last N days and exit (max 90)."`
+	Daily                  bool   `name:"daily" help:"Run daily jobs (summaries + verification) and exit."`
+	BackfillDaily          bool   `name:"backfill-daily" help:"Backfill all daily summaries and verification."`
+	PWSApiKey              string `name:"pws-api-key" env:"PWS_API_KEY" required:"" help:"Weather Underground API key."`
+	EcowittAPIKey          string `name:"ecowitt-api-key" env:"ECOWITT_API_KEY" help:"Ecowitt cloud API key."`
+	EcowittAppKey          string `name:"ecowitt-app-key" env:"ECOWITT_APP_KEY" help:"Ecowitt cloud application key."`
+	EcowittMAC             string `name:"ecowitt-mac" env:"ECOWITT_MAC" help:"Ecowitt device MAC address."`
 }
 
 var defaultStations = []models.Station{
@@ -97,7 +103,27 @@ func main() {
 	pws := ingest.NewPWS(cli.PWSApiKey)
 	forecast := ingest.NewForecastClient(cli.PWSApiKey, wandiligongLat, wandiligongLon)
 	scheduler := ingest.NewScheduler(st, pws, forecast, stationIDs, loc)
-	server := api.NewServer(st, cli.Port, loc)
+
+	ecowittAppKey := cli.EcowittAppKey
+	if ecowittAppKey == "" {
+		ecowittAppKey = os.Getenv("ECOWITT_APPLICATION_KEY")
+	}
+
+	var ecowittClient *ecowitt.Client
+	switch {
+	case cli.EcowittAPIKey == "" && ecowittAppKey == "" && cli.EcowittMAC == "":
+		// Air quality is optional.
+	case cli.EcowittAPIKey == "" || ecowittAppKey == "" || cli.EcowittMAC == "":
+		log.Printf("Ecowitt air quality disabled: set ECOWITT_API_KEY, ECOWITT_APP_KEY (or ECOWITT_APPLICATION_KEY), and ECOWITT_MAC")
+	default:
+		ecowittClient, err = ecowitt.NewClient(ecowittAppKey, cli.EcowittAPIKey, cli.EcowittMAC)
+		if err != nil {
+			log.Printf("Ecowitt air quality disabled: %v", err)
+		}
+	}
+
+	server := api.NewServer(st, cli.Port, loc, ecowittClient)
+	scheduler.SetAirQualityClient(ecowittClient)
 
 	// Configure image generation for weather banners, sharing mutex with server
 	if gen := server.ImageGenerator(); gen != nil {
@@ -115,6 +141,15 @@ func main() {
 		if err := scheduler.BackfillHistory7Day(); err != nil {
 			log.Fatalf("backfill: %v", err)
 		}
+	}
+
+	if cli.AirQualityBackfillDays > 0 {
+		log.Printf("backfilling %d days of Ecowitt air quality history", cli.AirQualityBackfillDays)
+		if err := scheduler.BackfillAirQualityHistory(cli.AirQualityBackfillDays); err != nil {
+			log.Fatalf("air quality backfill: %v", err)
+		}
+		log.Println("done")
+		return
 	}
 
 	if cli.BackfillDaily {

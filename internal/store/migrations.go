@@ -506,6 +506,21 @@ ALTER TABLE forecasts ADD COLUMN narrative_extended TEXT;
 		Description: "Ensure BOM daily API forecast columns exist after version conflict",
 		Apply:       ensureBOMDailyAPIForecastColumns,
 	},
+	{
+		Version:     26,
+		Description: "Add Ecowitt air quality readings table",
+		SQL: `
+CREATE TABLE IF NOT EXISTS air_quality_readings (
+    observed_at DATETIME PRIMARY KEY,
+    pm25 REAL NOT NULL,
+    real_time_aqi INTEGER,
+    aqi_24h REAL,
+    pm25_avg_24h REAL,
+    source_field_key TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+`,
+	},
 }
 
 func ensureBOMDailyAPIForecastColumns(tx *sql.Tx) error {

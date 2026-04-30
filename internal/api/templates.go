@@ -2,6 +2,7 @@ package api
 
 import (
 	"embed"
+	"encoding/json"
 	"html/template"
 	"strings"
 )
@@ -26,6 +27,13 @@ func newTemplates() *template.Template {
 		},
 		"neg": func(f float64) float64 {
 			return -f
+		},
+		"json": func(v any) template.JS {
+			encoded, err := json.Marshal(v)
+			if err != nil {
+				return template.JS("null")
+			}
+			return template.JS(encoded)
 		},
 		"upper": strings.ToUpper,
 	}

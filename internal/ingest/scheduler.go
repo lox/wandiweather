@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lox/wandiweather/internal/ecowitt"
 	"github.com/lox/wandiweather/internal/emergency"
 	"github.com/lox/wandiweather/internal/firedanger"
 	"github.com/lox/wandiweather/internal/forecast"
@@ -30,6 +31,7 @@ type Scheduler struct {
 	imageGen         *imagegen.Generator
 	imageCache       *imagegen.Cache
 	imageGenMu       *sync.Mutex // Shared with server to prevent duplicate API calls
+	airQualityClient *ecowitt.Client
 	emergencyClient  *emergency.Client
 	fireDangerClient *firedanger.Client
 	cron             *cron.Cron
@@ -81,9 +83,15 @@ func (s *Scheduler) SetImageGenerator(gen *imagegen.Generator, cache *imagegen.C
 	s.imageGenMu = mu
 }
 
+// SetAirQualityClient configures the scheduler to persist Ecowitt WH41 readings.
+func (s *Scheduler) SetAirQualityClient(client *ecowitt.Client) {
+	s.airQualityClient = client
+}
+
 func (s *Scheduler) Run(ctx context.Context) {
 	// Initial ingestion on startup
 	s.ingestObservations()
+	s.ingestAirQuality()
 	s.ingestForecasts()
 	s.ingestAlerts()
 	s.ingestFireDanger()
@@ -140,6 +148,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 			return
 		case <-obsTicker.C:
 			s.ingestObservations()
+			s.ingestAirQuality()
 		case <-alertTicker.C:
 			s.ingestAlerts()
 		case <-fdrTicker.C:
@@ -324,6 +333,7 @@ func (s *Scheduler) ensureWeatherImage(forecasts []models.Forecast) {
 	now := time.Now().In(s.loc)
 	todayDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	tod := forecast.GetTimeOfDay(now)
+	smoke := s.currentSmokeLevel(now)
 
 	// Find today's forecast
 	var todayForecast *models.Forecast
@@ -353,7 +363,7 @@ func (s *Scheduler) ensureWeatherImage(forecasts []models.Forecast) {
 	}
 
 	baseCondition := forecast.ExtractCondition(narrative, tempMax, tempMin)
-	condition := forecast.ConditionWithTime(baseCondition, tod)
+	condition := forecast.ConditionWithTimeAndSmoke(baseCondition, tod, smoke)
 
 	// Check cache (quick check before spawning goroutine)
 	if _, ok := s.imageCache.Get(condition); ok {
@@ -377,7 +387,7 @@ func (s *Scheduler) ensureWeatherImage(forecasts []models.Forecast) {
 		defer cancel()
 
 		log.Printf("scheduler: pre-generating weather image for %s", condition)
-		data, err := s.imageGen.Generate(ctx, baseCondition, tod, now)
+		data, err := s.imageGen.Generate(ctx, baseCondition, tod, smoke, now)
 		if err != nil {
 			log.Printf("scheduler: image generation failed: %v", err)
 			return
@@ -389,6 +399,17 @@ func (s *Scheduler) ensureWeatherImage(forecasts []models.Forecast) {
 		}
 		log.Printf("scheduler: cached weather image for %s", condition)
 	}()
+}
+
+func (s *Scheduler) currentSmokeLevel(now time.Time) forecast.SmokeLevel {
+	reading, err := s.store.GetLatestAirQualityReading()
+	if err != nil || reading == nil {
+		return forecast.SmokeClear
+	}
+	if now.Sub(reading.ObservedAt) > time.Hour {
+		return forecast.SmokeClear
+	}
+	return forecast.SmokeLevelFromAirQuality(reading.RealTimeAQI, reading.HasRealTimeAQI, reading.PM25)
 }
 
 func (s *Scheduler) ingestFireDanger() {
@@ -507,8 +528,60 @@ func (s *Scheduler) ingestObservations() {
 	}
 }
 
+func (s *Scheduler) ingestAirQuality() {
+	if s.airQualityClient == nil {
+		return
+	}
+
+	run, _ := s.store.StartIngestRun("ecowitt", "device/real_time", nil, nil)
+
+	reading, rawBody, fetchResult, err := s.airQualityClient.FetchCurrentAirQuality()
+	if run != nil {
+		run.Success = err == nil
+		if fetchResult != nil {
+			run.HTTPStatus = sql.NullInt64{Int64: int64(fetchResult.HTTPStatus), Valid: fetchResult.HTTPStatus > 0}
+			run.ResponseSizeBytes = sql.NullInt64{Int64: int64(fetchResult.ResponseSize), Valid: fetchResult.ResponseSize > 0}
+			run.RecordsParsed = sql.NullInt64{Int64: int64(fetchResult.RecordCount), Valid: true}
+		}
+		if err != nil {
+			run.ErrorMessage = sql.NullString{String: err.Error(), Valid: true}
+		}
+	}
+
+	if len(rawBody) > 0 && run != nil {
+		if _, err := s.store.StoreRawPayload(&run.ID, "ecowitt", "device/real_time", nil, nil, []byte(rawBody)); err != nil {
+			log.Printf("scheduler: store Ecowitt raw payload: %v", err)
+		}
+	}
+
+	if err != nil {
+		log.Printf("scheduler: fetch Ecowitt air quality: %v", err)
+		if run != nil {
+			s.store.CompleteIngestRun(run)
+		}
+		return
+	}
+
+	stored, err := s.store.UpsertAirQualityReadings([]ecowitt.AirQualityReading{*reading})
+	if err != nil {
+		log.Printf("scheduler: store Ecowitt air quality: %v", err)
+		if run != nil {
+			run.Success = false
+			run.ErrorMessage = sql.NullString{String: fmt.Sprintf("store: %v", err), Valid: true}
+			s.store.CompleteIngestRun(run)
+		}
+		return
+	}
+
+	if run != nil {
+		run.RecordsStored = sql.NullInt64{Int64: int64(stored), Valid: true}
+		s.store.CompleteIngestRun(run)
+	}
+}
+
 func (s *Scheduler) IngestOnce() error {
 	s.ingestObservations()
+	s.ingestAirQuality()
 	s.ingestForecasts()
 	s.ingestAlerts()
 	s.ingestFireDanger()
@@ -533,6 +606,80 @@ func (s *Scheduler) BackfillHistory7Day() error {
 		}
 		log.Printf("scheduler: backfilled %s: %d hourly observations", stationID, inserted)
 	}
+	return nil
+}
+
+func (s *Scheduler) BackfillAirQualityHistory(days int) error {
+	if s.airQualityClient == nil {
+		return fmt.Errorf("ecowitt air quality client not configured")
+	}
+	if days <= 0 {
+		return fmt.Errorf("air quality backfill days must be positive")
+	}
+	if days > 90 {
+		return fmt.Errorf("ecowitt WH41 backfill currently supports up to 90 days of 5-minute history")
+	}
+
+	end := time.Now().UTC().Truncate(5 * time.Minute)
+	start := end.Add(-time.Duration(days) * 24 * time.Hour)
+	totalStored := 0
+
+	for chunkStart := start; chunkStart.Before(end); {
+		chunkEnd := chunkStart.Add(24 * time.Hour)
+		if chunkEnd.After(end) {
+			chunkEnd = end
+		}
+
+		run, _ := s.store.StartIngestRun("ecowitt", "device/history", nil, nil)
+		readings, rawBody, fetchResult, err := s.airQualityClient.FetchAirQualityHistory(chunkStart, chunkEnd, ecowitt.HistoryCycle5Min)
+
+		if run != nil {
+			run.Success = err == nil
+			if fetchResult != nil {
+				run.HTTPStatus = sql.NullInt64{Int64: int64(fetchResult.HTTPStatus), Valid: fetchResult.HTTPStatus > 0}
+				run.ResponseSizeBytes = sql.NullInt64{Int64: int64(fetchResult.ResponseSize), Valid: fetchResult.ResponseSize > 0}
+				run.RecordsParsed = sql.NullInt64{Int64: int64(fetchResult.RecordCount), Valid: true}
+			}
+			if err != nil {
+				run.ErrorMessage = sql.NullString{String: err.Error(), Valid: true}
+			}
+		}
+
+		if len(rawBody) > 0 && run != nil {
+			if _, err := s.store.StoreRawPayload(&run.ID, "ecowitt", "device/history", nil, nil, []byte(rawBody)); err != nil {
+				log.Printf("scheduler: store Ecowitt history payload: %v", err)
+			}
+		}
+
+		if err != nil {
+			if run != nil {
+				s.store.CompleteIngestRun(run)
+			}
+			return fmt.Errorf("fetch Ecowitt air quality history %s to %s: %w", chunkStart.Format(time.RFC3339), chunkEnd.Format(time.RFC3339), err)
+		}
+
+		stored, err := s.store.UpsertAirQualityReadings(readings)
+		if err != nil {
+			if run != nil {
+				run.Success = false
+				run.ErrorMessage = sql.NullString{String: fmt.Sprintf("store: %v", err), Valid: true}
+				s.store.CompleteIngestRun(run)
+			}
+			return fmt.Errorf("store Ecowitt air quality history %s to %s: %w", chunkStart.Format(time.RFC3339), chunkEnd.Format(time.RFC3339), err)
+		}
+
+		totalStored += stored
+		if run != nil {
+			run.RecordsStored = sql.NullInt64{Int64: int64(stored), Valid: true}
+			if err := s.store.CompleteIngestRun(run); err != nil {
+				return fmt.Errorf("complete Ecowitt air quality ingest run: %w", err)
+			}
+		}
+
+		chunkStart = chunkEnd
+	}
+
+	log.Printf("scheduler: backfilled %d Ecowitt air quality readings", totalStored)
 	return nil
 }
 
