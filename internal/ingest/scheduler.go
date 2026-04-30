@@ -22,6 +22,7 @@ type Scheduler struct {
 	pws              *PWS
 	forecast         *ForecastClient
 	bom              *BOMClient
+	bomDailyAPI      *BOMDailyAPIClient
 	daily            *DailyJobs
 	stationIDs       []string
 	loc              *time.Location
@@ -34,12 +35,26 @@ type Scheduler struct {
 	cron             *cron.Cron
 }
 
+type bomIngestTarget struct {
+	client     bomForecastSource
+	run        *store.IngestRun
+	locationID string
+}
+
+type bomFetchOutcome struct {
+	forecasts   []models.Forecast
+	rawBody     string
+	fetchResult *FetchResult
+	err         error
+}
+
 func NewScheduler(store *store.Store, pws *PWS, forecast *ForecastClient, stationIDs []string, loc *time.Location) *Scheduler {
 	return &Scheduler{
 		store:           store,
 		pws:             pws,
 		forecast:        forecast,
 		bom:             NewBOMClient(""),
+		bomDailyAPI:     NewBOMDailyAPIClient(""),
 		daily:           NewDailyJobs(store),
 		stationIDs:      stationIDs,
 		loc:             loc,
@@ -190,59 +205,92 @@ func (s *Scheduler) ingestForecasts() {
 		s.store.CompleteIngestRun(run)
 	}
 
-	if s.bom != nil {
-		log.Println("scheduler: ingesting BOM forecasts")
-		bomEndpoint := s.bom.Endpoint()
-		bomLocationID := s.bom.locationID
-		bomRun, _ := s.store.StartIngestRun("bom", bomEndpoint, nil, &bomLocationID)
-		bomForecasts, bomRawBody, bomFetchResult, err := s.bom.FetchForecasts()
+	s.ingestBOMForecastSources()
 
-		if bomRun != nil {
-			bomRun.Success = err == nil
-			if bomFetchResult != nil {
-				bomRun.HTTPStatus = sql.NullInt64{Int64: int64(bomFetchResult.HTTPStatus), Valid: bomFetchResult.HTTPStatus > 0}
-				bomRun.ResponseSizeBytes = sql.NullInt64{Int64: int64(bomFetchResult.ResponseSize), Valid: bomFetchResult.ResponseSize > 0}
-				bomRun.RecordsParsed = sql.NullInt64{Int64: int64(bomFetchResult.RecordCount), Valid: true}
-				if bomFetchResult.ParseErrors > 0 {
-					bomRun.ParseErrors = sql.NullInt64{Int64: int64(bomFetchResult.ParseErrors), Valid: true}
-					bomRun.ErrorMessage = sql.NullString{String: bomFetchResult.ParseError, Valid: true}
-					log.Printf("scheduler: BOM forecast parse errors: %s", bomFetchResult.ParseError)
+	s.ensureWeatherImage(forecasts)
+}
+
+func (s *Scheduler) ingestBOMForecastSources() {
+	var targets []bomIngestTarget
+	if s.bom != nil {
+		locationID := s.bom.LocationID()
+		run, _ := s.store.StartIngestRun(s.bom.Source(), s.bom.Endpoint(), nil, &locationID)
+		targets = append(targets, bomIngestTarget{client: s.bom, run: run, locationID: locationID})
+	}
+	if s.bomDailyAPI != nil {
+		locationID := s.bomDailyAPI.LocationID()
+		run, _ := s.store.StartIngestRun(s.bomDailyAPI.Source(), s.bomDailyAPI.Endpoint(), nil, &locationID)
+		targets = append(targets, bomIngestTarget{client: s.bomDailyAPI, run: run, locationID: locationID})
+	}
+	if len(targets) == 0 {
+		return
+	}
+
+	log.Println("scheduler: ingesting BOM forecast sources")
+
+	outcomes := make([]bomFetchOutcome, len(targets))
+	var wg sync.WaitGroup
+	for i := range targets {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			forecasts, rawBody, fetchResult, err := targets[i].client.FetchForecasts()
+			outcomes[i] = bomFetchOutcome{
+				forecasts:   forecasts,
+				rawBody:     rawBody,
+				fetchResult: fetchResult,
+				err:         err,
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	for i, target := range targets {
+		outcome := outcomes[i]
+		if target.run != nil {
+			target.run.Success = outcome.err == nil
+			if outcome.fetchResult != nil {
+				target.run.HTTPStatus = sql.NullInt64{Int64: int64(outcome.fetchResult.HTTPStatus), Valid: outcome.fetchResult.HTTPStatus > 0}
+				target.run.ResponseSizeBytes = sql.NullInt64{Int64: int64(outcome.fetchResult.ResponseSize), Valid: outcome.fetchResult.ResponseSize > 0}
+				target.run.RecordsParsed = sql.NullInt64{Int64: int64(outcome.fetchResult.RecordCount), Valid: true}
+				if outcome.fetchResult.ParseErrors > 0 {
+					target.run.ParseErrors = sql.NullInt64{Int64: int64(outcome.fetchResult.ParseErrors), Valid: true}
+					target.run.ErrorMessage = sql.NullString{String: outcome.fetchResult.ParseError, Valid: true}
+					log.Printf("scheduler: %s forecast parse errors: %s", target.client.Source(), outcome.fetchResult.ParseError)
 				}
 			}
-			if err != nil {
-				bomRun.ErrorMessage = sql.NullString{String: err.Error(), Valid: true}
+			if outcome.err != nil {
+				target.run.ErrorMessage = sql.NullString{String: outcome.err.Error(), Valid: true}
 			}
 		}
 
-		if len(bomRawBody) > 0 && bomRun != nil {
-			if _, err := s.store.StoreRawPayload(&bomRun.ID, "bom", bomEndpoint, nil, &bomLocationID, []byte(bomRawBody)); err != nil {
-				log.Printf("scheduler: store BOM raw payload: %v", err)
+		if len(outcome.rawBody) > 0 && target.run != nil {
+			if _, err := s.store.StoreRawPayload(&target.run.ID, target.client.Source(), target.client.Endpoint(), nil, &target.locationID, []byte(outcome.rawBody)); err != nil {
+				log.Printf("scheduler: store %s raw payload: %v", target.client.Source(), err)
 			}
 		}
 
-		if err != nil {
-			log.Printf("scheduler: fetch BOM forecast: %v", err)
+		if outcome.err != nil {
+			log.Printf("scheduler: fetch %s forecast: %v", target.client.Source(), outcome.err)
 		} else {
 			inserted := 0
-			for _, fc := range bomForecasts {
+			for _, fc := range outcome.forecasts {
 				if err := s.store.InsertForecast(fc); err != nil {
-					log.Printf("scheduler: insert BOM forecast: %v", err)
+					log.Printf("scheduler: insert %s forecast: %v", target.client.Source(), err)
 					continue
 				}
 				inserted++
 			}
-			log.Printf("scheduler: inserted %d BOM forecast days", inserted)
-			if bomRun != nil {
-				bomRun.RecordsStored = sql.NullInt64{Int64: int64(inserted), Valid: true}
+			log.Printf("scheduler: inserted %d %s forecast days", inserted, target.client.Source())
+			if target.run != nil {
+				target.run.RecordsStored = sql.NullInt64{Int64: int64(inserted), Valid: true}
 			}
 		}
 
-		if bomRun != nil {
-			s.store.CompleteIngestRun(bomRun)
+		if target.run != nil {
+			s.store.CompleteIngestRun(target.run)
 		}
 	}
-
-	s.ensureWeatherImage(forecasts)
 }
 
 // checkWeatherImage checks if the current time-of-day image is cached and generates if needed.

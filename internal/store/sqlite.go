@@ -13,8 +13,42 @@ type Store struct {
 	loc *time.Location
 }
 
+const forecastSelectColumns = `id, source, fetched_at, valid_date, day_of_forecast,
+	       temp_max, temp_min, humidity, precip_chance, precip_amount, precip_range,
+	       precip_min, precip_max, precip_units,
+	       wind_speed, wind_dir, narrative, narrative_short, narrative_extended, location_id`
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
 func New(db *sql.DB, loc *time.Location) *Store {
 	return &Store{db: db, loc: loc}
+}
+
+func scanForecast(scanner rowScanner, f *models.Forecast) error {
+	return scanner.Scan(
+		&f.ID,
+		&f.Source,
+		&f.FetchedAt,
+		&f.ValidDate,
+		&f.DayOfForecast,
+		&f.TempMax,
+		&f.TempMin,
+		&f.Humidity,
+		&f.PrecipChance,
+		&f.PrecipAmount,
+		&f.PrecipRange,
+		&f.PrecipMin,
+		&f.PrecipMax,
+		&f.PrecipUnits,
+		&f.WindSpeed,
+		&f.WindDir,
+		&f.Narrative,
+		&f.NarrativeShort,
+		&f.NarrativeExtended,
+		&f.LocationID,
+	)
 }
 
 func (s *Store) UpsertStation(st models.Station) error {
@@ -150,10 +184,20 @@ func (s *Store) InsertForecast(f models.Forecast) error {
 		source = "wu"
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO forecasts (source, fetched_at, valid_date, day_of_forecast, temp_max, temp_min, humidity, precip_chance, precip_amount, precip_range, wind_speed, wind_dir, narrative, raw_json, location_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO forecasts (
+			source, fetched_at, valid_date, day_of_forecast,
+			temp_max, temp_min, humidity, precip_chance, precip_amount, precip_range,
+			precip_min, precip_max, precip_units,
+			wind_speed, wind_dir, narrative, narrative_short, narrative_extended,
+			raw_json, location_id
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source, fetched_at, valid_date) DO NOTHING
-	`, source, f.FetchedAt, f.ValidDate, f.DayOfForecast, f.TempMax, f.TempMin, f.Humidity, f.PrecipChance, f.PrecipAmount, f.PrecipRange, f.WindSpeed, f.WindDir, f.Narrative, f.RawJSON, f.LocationID)
+	`, source, f.FetchedAt, f.ValidDate, f.DayOfForecast,
+		f.TempMax, f.TempMin, f.Humidity, f.PrecipChance, f.PrecipAmount, f.PrecipRange,
+		f.PrecipMin, f.PrecipMax, f.PrecipUnits,
+		f.WindSpeed, f.WindDir, f.Narrative, f.NarrativeShort, f.NarrativeExtended,
+		f.RawJSON, f.LocationID)
 	return err
 }
 
@@ -174,7 +218,7 @@ func (s *Store) ComputeDailySummary(stationID string, date time.Time) (*models.D
 	nightEnd := time.Date(y, m, d, 6, 0, 0, 0, loc).UTC()      // 6am
 
 	eveningStart := time.Date(y, m, d-1, 18, 0, 0, 0, loc).UTC() // 6pm previous day
-	eveningEnd := localDate.UTC()                                 // midnight
+	eveningEnd := localDate.UTC()                                // midnight
 
 	afternoonStart := time.Date(y, m, d, 12, 0, 0, 0, loc).UTC()
 	afternoonEnd := time.Date(y, m, d, 18, 0, 0, 0, loc).UTC()
@@ -533,7 +577,7 @@ func (s *Store) GetMiddayTempByTier(date time.Time) (map[string]float64, error) 
 func (s *Store) GetForecastsForDate(validDate time.Time) ([]models.Forecast, error) {
 	dateStr := validDate.Format("2006-01-02")
 	rows, err := s.db.Query(`
-		SELECT id, source, fetched_at, valid_date, day_of_forecast, temp_max, temp_min, humidity, precip_chance, precip_amount, wind_speed, wind_dir, narrative
+		SELECT `+forecastSelectColumns+`
 		FROM forecasts
 		WHERE SUBSTR(valid_date, 1, 10) = ?
 		ORDER BY fetched_at DESC
@@ -546,7 +590,7 @@ func (s *Store) GetForecastsForDate(validDate time.Time) ([]models.Forecast, err
 	var forecasts []models.Forecast
 	for rows.Next() {
 		var f models.Forecast
-		if err := rows.Scan(&f.ID, &f.Source, &f.FetchedAt, &f.ValidDate, &f.DayOfForecast, &f.TempMax, &f.TempMin, &f.Humidity, &f.PrecipChance, &f.PrecipAmount, &f.WindSpeed, &f.WindDir, &f.Narrative); err != nil {
+		if err := scanForecast(rows, &f); err != nil {
 			return nil, err
 		}
 		forecasts = append(forecasts, f)
@@ -563,9 +607,10 @@ func (s *Store) GetVerificationForecasts(validDate time.Time) ([]models.Forecast
 	cutoff := time.Date(validDate.Year(), validDate.Month(), validDate.Day(), 0, 0, 0, 0, s.loc).UTC()
 
 	rows, err := s.db.Query(`
-		SELECT f.id, f.source, f.fetched_at, f.valid_date, f.day_of_forecast, 
-		       f.temp_max, f.temp_min, f.humidity, f.precip_chance, f.precip_amount, 
-		       f.wind_speed, f.wind_dir, f.narrative
+		SELECT f.id, f.source, f.fetched_at, f.valid_date, f.day_of_forecast,
+		       f.temp_max, f.temp_min, f.humidity, f.precip_chance, f.precip_amount, f.precip_range,
+		       f.precip_min, f.precip_max, f.precip_units,
+		       f.wind_speed, f.wind_dir, f.narrative, f.narrative_short, f.narrative_extended, f.location_id
 		FROM forecasts f
 		INNER JOIN (
 			SELECT source, day_of_forecast, MIN(fetched_at) as first_fetch
@@ -588,9 +633,7 @@ func (s *Store) GetVerificationForecasts(validDate time.Time) ([]models.Forecast
 	var forecasts []models.Forecast
 	for rows.Next() {
 		var f models.Forecast
-		if err := rows.Scan(&f.ID, &f.Source, &f.FetchedAt, &f.ValidDate, &f.DayOfForecast,
-			&f.TempMax, &f.TempMin, &f.Humidity, &f.PrecipChance, &f.PrecipAmount,
-			&f.WindSpeed, &f.WindDir, &f.Narrative); err != nil {
+		if err := scanForecast(rows, &f); err != nil {
 			return nil, err
 		}
 		forecasts = append(forecasts, f)
@@ -781,23 +824,19 @@ func (s *Store) GetLatestForecasts() (map[string][]models.Forecast, error) {
 	// Note: explicitly list columns to avoid loading raw_json which can be large
 	rows, err := s.db.Query(`
 		WITH ranked AS (
-			SELECT id, source, fetched_at, valid_date, day_of_forecast,
-			       temp_max, temp_min, precip_chance, precip_amount, precip_range,
-			       wind_speed, wind_dir, narrative,
+			SELECT `+forecastSelectColumns+`,
 			       ROW_NUMBER() OVER (
-			           PARTITION BY source, SUBSTR(valid_date, 1, 10)
-			           ORDER BY 
+				           PARTITION BY source, SUBSTR(valid_date, 1, 10)
+				           ORDER BY 
 			               CASE WHEN temp_max IS NOT NULL OR temp_min IS NOT NULL THEN 0 ELSE 1 END,
 			               fetched_at DESC
 			       ) as rn
 			FROM forecasts
 			WHERE SUBSTR(valid_date, 1, 10) >= ?
 		)
-		SELECT id, source, fetched_at, valid_date, day_of_forecast, 
-		       temp_max, temp_min, precip_chance, precip_amount, precip_range, 
-		       wind_speed, wind_dir, narrative
-		FROM ranked
-		WHERE rn = 1
+		SELECT `+forecastSelectColumns+`
+			FROM ranked
+			WHERE rn = 1
 		ORDER BY valid_date, source
 	`, today)
 	if err != nil {
@@ -808,9 +847,7 @@ func (s *Store) GetLatestForecasts() (map[string][]models.Forecast, error) {
 	result := make(map[string][]models.Forecast)
 	for rows.Next() {
 		var f models.Forecast
-		if err := rows.Scan(&f.ID, &f.Source, &f.FetchedAt, &f.ValidDate, &f.DayOfForecast,
-			&f.TempMax, &f.TempMin, &f.PrecipChance, &f.PrecipAmount, &f.PrecipRange,
-			&f.WindSpeed, &f.WindDir, &f.Narrative); err != nil {
+		if err := scanForecast(rows, &f); err != nil {
 			return nil, err
 		}
 		result[f.Source] = append(result[f.Source], f)
@@ -1208,8 +1245,6 @@ func (s *Store) GetMorningObservations(stationID string, date time.Time) ([]mode
 
 	return s.GetObservations(stationID, morningStart.UTC(), morningEnd.UTC())
 }
-
-
 
 func (s *Store) GetCorrectionStatsForRegime(source, target string, dayOfForecast int, regime string) (*CorrectionStats, error) {
 	row := s.db.QueryRow(`

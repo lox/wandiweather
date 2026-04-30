@@ -326,7 +326,7 @@ func TestInsertAndGetForecast(t *testing.T) {
 		TempMax:       sql.NullFloat64{Float64: 27.0, Valid: true},
 		TempMin:       sql.NullFloat64{Float64: 14.0, Valid: true},
 		PrecipRange:   sql.NullString{String: "0 to 1 mm", Valid: true},
-		LocationID:    sql.NullString{String: "r3811m", Valid: true},
+		LocationID:    sql.NullString{String: "VIC_PT075", Valid: true},
 	}
 	if err := store.InsertForecast(bomForecast); err != nil {
 		t.Fatalf("InsertForecast BOM: %v", err)
@@ -348,6 +348,64 @@ func TestInsertAndGetForecast(t *testing.T) {
 	}
 	if forecasts["bom"][0].TempMax.Float64 != 27.0 {
 		t.Errorf("BOM TempMax = %v, want 27.0", forecasts["bom"][0].TempMax.Float64)
+	}
+}
+
+func TestInsertAndGetForecast_PreservesDailyAPIRichFields(t *testing.T) {
+	store := setupTestStore(t)
+
+	fetchedAt := time.Now().UTC().Truncate(time.Second)
+	validDate := time.Now().UTC().Add(24 * time.Hour).Truncate(24 * time.Hour)
+
+	dailyAPI := models.Forecast{
+		Source:            "bom_daily_api",
+		FetchedAt:         fetchedAt,
+		ValidDate:         validDate,
+		DayOfForecast:     1,
+		TempMax:           sql.NullFloat64{Float64: 27.0, Valid: true},
+		TempMin:           sql.NullFloat64{Float64: 14.0, Valid: true},
+		PrecipChance:      sql.NullInt64{Int64: 80, Valid: true},
+		PrecipAmount:      sql.NullFloat64{Float64: 5, Valid: true},
+		PrecipRange:       sql.NullString{String: "1 to 5 mm", Valid: true},
+		PrecipMin:         sql.NullFloat64{Float64: 1, Valid: true},
+		PrecipMax:         sql.NullFloat64{Float64: 5, Valid: true},
+		PrecipUnits:       sql.NullString{String: "mm", Valid: true},
+		Narrative:         sql.NullString{String: "Showers.", Valid: true},
+		NarrativeShort:    sql.NullString{String: "Showers.", Valid: true},
+		NarrativeExtended: sql.NullString{String: "Showers developing in the afternoon.", Valid: true},
+		LocationID:        sql.NullString{String: "r3811m", Valid: true},
+	}
+	if err := store.InsertForecast(dailyAPI); err != nil {
+		t.Fatalf("InsertForecast bom_daily_api: %v", err)
+	}
+
+	forecasts, err := store.GetLatestForecasts()
+	if err != nil {
+		t.Fatalf("GetLatestForecasts: %v", err)
+	}
+
+	if len(forecasts["bom_daily_api"]) != 1 {
+		t.Fatalf("len(forecasts[bom_daily_api]) = %d, want 1", len(forecasts["bom_daily_api"]))
+	}
+
+	got := forecasts["bom_daily_api"][0]
+	if !got.NarrativeShort.Valid || got.NarrativeShort.String != "Showers." {
+		t.Fatalf("NarrativeShort = %+v, want Showers.", got.NarrativeShort)
+	}
+	if !got.NarrativeExtended.Valid || got.NarrativeExtended.String != "Showers developing in the afternoon." {
+		t.Fatalf("NarrativeExtended = %+v, want extended narrative", got.NarrativeExtended)
+	}
+	if !got.PrecipMin.Valid || got.PrecipMin.Float64 != 1 {
+		t.Fatalf("PrecipMin = %+v, want 1", got.PrecipMin)
+	}
+	if !got.PrecipMax.Valid || got.PrecipMax.Float64 != 5 {
+		t.Fatalf("PrecipMax = %+v, want 5", got.PrecipMax)
+	}
+	if !got.PrecipUnits.Valid || got.PrecipUnits.String != "mm" {
+		t.Fatalf("PrecipUnits = %+v, want mm", got.PrecipUnits)
+	}
+	if !got.LocationID.Valid || got.LocationID.String != "r3811m" {
+		t.Fatalf("LocationID = %+v, want r3811m", got.LocationID)
 	}
 }
 

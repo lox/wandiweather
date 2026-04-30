@@ -56,22 +56,27 @@ const (
 )
 
 type Forecast struct {
-	ID            int64
-	Source        string // "wu" or "bom"
-	FetchedAt     time.Time
-	ValidDate     time.Time
-	DayOfForecast int
-	TempMax       sql.NullFloat64
-	TempMin       sql.NullFloat64
-	Humidity      sql.NullInt64
-	PrecipChance  sql.NullInt64
-	PrecipAmount  sql.NullFloat64
-	PrecipRange   sql.NullString // BOM format: "1 to 5 mm"
-	WindSpeed     sql.NullFloat64
-	WindDir       sql.NullString
-	Narrative     sql.NullString
-	RawJSON       string
-	LocationID    sql.NullString // Geocode (WU) or AAC code (BOM)
+	ID                int64
+	Source            string // "wu", "bom", or a shadow source such as "bom_daily_api"
+	FetchedAt         time.Time
+	ValidDate         time.Time
+	DayOfForecast     int
+	TempMax           sql.NullFloat64
+	TempMin           sql.NullFloat64
+	Humidity          sql.NullInt64
+	PrecipChance      sql.NullInt64
+	PrecipAmount      sql.NullFloat64
+	PrecipRange       sql.NullString // BOM format: "1 to 5 mm"
+	PrecipMin         sql.NullFloat64
+	PrecipMax         sql.NullFloat64
+	PrecipUnits       sql.NullString
+	WindSpeed         sql.NullFloat64
+	WindDir           sql.NullString
+	Narrative         sql.NullString
+	NarrativeShort    sql.NullString
+	NarrativeExtended sql.NullString
+	RawJSON           string
+	LocationID        sql.NullString // Geocode (WU) or AAC code (BOM)
 }
 
 type DailySummary struct {
@@ -129,15 +134,15 @@ type ForecastVerification struct {
 }
 
 type VerificationStats struct {
-	Count        int
-	AvgMaxBias   sql.NullFloat64
-	AvgMinBias   sql.NullFloat64
-	MAEMax       sql.NullFloat64
-	MAEMin       sql.NullFloat64
-	AvgWindBias  sql.NullFloat64
-	MAEWind      sql.NullFloat64
+	Count         int
+	AvgMaxBias    sql.NullFloat64
+	AvgMinBias    sql.NullFloat64
+	MAEMax        sql.NullFloat64
+	MAEMin        sql.NullFloat64
+	AvgWindBias   sql.NullFloat64
+	MAEWind       sql.NullFloat64
 	AvgPrecipBias sql.NullFloat64
-	MAEPrecip    sql.NullFloat64
+	MAEPrecip     sql.NullFloat64
 }
 
 type DisplayedForecast struct {

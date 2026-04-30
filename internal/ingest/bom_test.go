@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestBOMClientFetchForecasts_UsesWangarattaDailyAPI(t *testing.T) {
+func TestBOMDailyAPIClientFetchForecasts_UsesWangarattaDailyAPI(t *testing.T) {
 	requestedPath := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestedPath <- r.URL.Path
@@ -50,7 +50,7 @@ func TestBOMClientFetchForecasts_UsesWangarattaDailyAPI(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewBOMClient("r3811m")
+	client := NewBOMDailyAPIClient("r3811m")
 	client.baseURL = server.URL + "/v1"
 	client.client = server.Client()
 
@@ -90,8 +90,17 @@ func TestBOMClientFetchForecasts_UsesWangarattaDailyAPI(t *testing.T) {
 	if !first.TempMin.Valid || first.TempMin.Float64 != 16 {
 		t.Fatalf("first.TempMin = %+v, want valid 16", first.TempMin)
 	}
+	if first.Source != "bom_daily_api" {
+		t.Fatalf("first.Source = %q, want bom_daily_api", first.Source)
+	}
 	if !first.Narrative.Valid || first.Narrative.String != "Rain. Heavy falls possible." {
 		t.Fatalf("first.Narrative = %+v, want short_text narrative", first.Narrative)
+	}
+	if !first.NarrativeShort.Valid || first.NarrativeShort.String != "Rain. Heavy falls possible." {
+		t.Fatalf("first.NarrativeShort = %+v, want short_text narrative", first.NarrativeShort)
+	}
+	if !first.NarrativeExtended.Valid || first.NarrativeExtended.String != "Cloudy with heavy rain." {
+		t.Fatalf("first.NarrativeExtended = %+v, want extended_text narrative", first.NarrativeExtended)
 	}
 	if !first.PrecipChance.Valid || first.PrecipChance.Int64 != 100 {
 		t.Fatalf("first.PrecipChance = %+v, want 100", first.PrecipChance)
@@ -101,6 +110,15 @@ func TestBOMClientFetchForecasts_UsesWangarattaDailyAPI(t *testing.T) {
 	}
 	if !first.PrecipAmount.Valid || first.PrecipAmount.Float64 != 60 {
 		t.Fatalf("first.PrecipAmount = %+v, want 60", first.PrecipAmount)
+	}
+	if !first.PrecipMin.Valid || first.PrecipMin.Float64 != 40 {
+		t.Fatalf("first.PrecipMin = %+v, want 40", first.PrecipMin)
+	}
+	if !first.PrecipMax.Valid || first.PrecipMax.Float64 != 60 {
+		t.Fatalf("first.PrecipMax = %+v, want 60", first.PrecipMax)
+	}
+	if !first.PrecipUnits.Valid || first.PrecipUnits.String != "mm" {
+		t.Fatalf("first.PrecipUnits = %+v, want mm", first.PrecipUnits)
 	}
 	if !first.LocationID.Valid || first.LocationID.String != "r3811m" {
 		t.Fatalf("first.LocationID = %+v, want r3811m", first.LocationID)
@@ -113,11 +131,23 @@ func TestBOMClientFetchForecasts_UsesWangarattaDailyAPI(t *testing.T) {
 	if !second.Narrative.Valid || second.Narrative.String != "Possible shower." {
 		t.Fatalf("second.Narrative = %+v, want extended_text fallback", second.Narrative)
 	}
+	if second.NarrativeShort.Valid {
+		t.Fatalf("second.NarrativeShort = %+v, want invalid when short_text is null", second.NarrativeShort)
+	}
+	if !second.NarrativeExtended.Valid || second.NarrativeExtended.String != "Possible shower." {
+		t.Fatalf("second.NarrativeExtended = %+v, want extended_text fallback", second.NarrativeExtended)
+	}
 	if !second.PrecipRange.Valid || second.PrecipRange.String != "0 mm" {
 		t.Fatalf("second.PrecipRange = %+v, want 0 mm", second.PrecipRange)
 	}
 	if !second.PrecipAmount.Valid || second.PrecipAmount.Float64 != 0 {
 		t.Fatalf("second.PrecipAmount = %+v, want 0", second.PrecipAmount)
+	}
+	if !second.PrecipMin.Valid || second.PrecipMin.Float64 != 0 {
+		t.Fatalf("second.PrecipMin = %+v, want 0", second.PrecipMin)
+	}
+	if second.PrecipMax.Valid {
+		t.Fatalf("second.PrecipMax = %+v, want invalid when max is null", second.PrecipMax)
 	}
 
 	if got, want := first.ValidDate, mustMelbourneValidDate(t, "2026-03-01T13:00:00Z"); !got.Equal(want) {
@@ -128,7 +158,7 @@ func TestBOMClientFetchForecasts_UsesWangarattaDailyAPI(t *testing.T) {
 	}
 }
 
-func TestBOMClientFetchForecasts_TracksParseErrors(t *testing.T) {
+func TestBOMDailyAPIClientFetchForecasts_TracksParseErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
@@ -140,7 +170,7 @@ func TestBOMClientFetchForecasts_TracksParseErrors(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewBOMClient("r3811m")
+	client := NewBOMDailyAPIClient("r3811m")
 	client.baseURL = server.URL + "/v1"
 	client.client = server.Client()
 
@@ -160,6 +190,62 @@ func TestBOMClientFetchForecasts_TracksParseErrors(t *testing.T) {
 	}
 	if !strings.Contains(result.ParseError, `data[0].date="not-a-date"`) {
 		t.Fatalf("ParseError = %q, want reference to invalid date", result.ParseError)
+	}
+}
+
+func TestParseLegacyBOMForecasts_UsesFTPLocationShape(t *testing.T) {
+	fetchedAt := time.Date(2026, 3, 1, 1, 2, 3, 0, time.UTC)
+	body := []byte(`
+		<product>
+		  <forecast>
+		    <area aac="VIC_PT075" description="Wangaratta" type="location">
+		      <forecast-period index="0" start-time-utc="2026-03-01T13:00:00Z" end-time-utc="2026-03-02T13:00:00Z">
+		        <element type="air_temperature_maximum" units="C">21</element>
+		        <element type="air_temperature_minimum" units="C">16</element>
+		        <element type="precipitation_range" units="mm">40 to 60 mm</element>
+		        <text type="precis">Rain. Heavy falls possible.</text>
+		        <text type="probability_of_precipitation">100%</text>
+		      </forecast-period>
+		    </area>
+		  </forecast>
+		</product>
+	`)
+
+	forecasts, result, err := parseLegacyBOMForecasts(body, "VIC_PT075", fetchedAt)
+	if err != nil {
+		t.Fatalf("parseLegacyBOMForecasts() error = %v", err)
+	}
+	if result.RecordCount != 1 {
+		t.Fatalf("RecordCount = %d, want 1", result.RecordCount)
+	}
+	if len(forecasts) != 1 {
+		t.Fatalf("len(forecasts) = %d, want 1", len(forecasts))
+	}
+
+	forecast := forecasts[0]
+	if forecast.Source != "bom" {
+		t.Fatalf("forecast.Source = %q, want bom", forecast.Source)
+	}
+	if !forecast.LocationID.Valid || forecast.LocationID.String != "VIC_PT075" {
+		t.Fatalf("forecast.LocationID = %+v, want VIC_PT075", forecast.LocationID)
+	}
+	if forecast.NarrativeShort.Valid {
+		t.Fatalf("forecast.NarrativeShort = %+v, want invalid for FTP feed", forecast.NarrativeShort)
+	}
+	if forecast.NarrativeExtended.Valid {
+		t.Fatalf("forecast.NarrativeExtended = %+v, want invalid for FTP feed", forecast.NarrativeExtended)
+	}
+	if forecast.PrecipMin.Valid {
+		t.Fatalf("forecast.PrecipMin = %+v, want invalid for FTP feed", forecast.PrecipMin)
+	}
+	if forecast.PrecipMax.Valid {
+		t.Fatalf("forecast.PrecipMax = %+v, want invalid for FTP feed", forecast.PrecipMax)
+	}
+	if forecast.PrecipUnits.Valid {
+		t.Fatalf("forecast.PrecipUnits = %+v, want invalid for FTP feed", forecast.PrecipUnits)
+	}
+	if !forecast.PrecipRange.Valid || forecast.PrecipRange.String != "40 to 60 mm" {
+		t.Fatalf("forecast.PrecipRange = %+v, want 40 to 60 mm", forecast.PrecipRange)
 	}
 }
 
