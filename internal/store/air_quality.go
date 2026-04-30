@@ -19,6 +19,18 @@ func (s *Store) UpsertAirQualityReadings(readings []ecowitt.AirQualityReading) (
 	if err != nil {
 		return 0, fmt.Errorf("begin tx: %w", err)
 	}
+	defer tx.Rollback()
+
+	existsStmt, err := tx.Prepare(`
+		SELECT 1
+		FROM air_quality_readings
+		WHERE observed_at = ?
+		LIMIT 1
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("prepare air quality exists query: %w", err)
+	}
+	defer existsStmt.Close()
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO air_quality_readings (
@@ -38,13 +50,17 @@ func (s *Store) UpsertAirQualityReadings(readings []ecowitt.AirQualityReading) (
 			source_field_key = COALESCE(excluded.source_field_key, air_quality_readings.source_field_key)
 	`)
 	if err != nil {
-		tx.Rollback()
 		return 0, fmt.Errorf("prepare air quality upsert: %w", err)
 	}
 	defer stmt.Close()
 
-	stored := 0
+	inserted := 0
 	for _, reading := range readings {
+		alreadyExists, err := airQualityReadingExists(existsStmt, reading.ObservedAt.UTC())
+		if err != nil {
+			return 0, fmt.Errorf("check air quality reading at %s: %w", reading.ObservedAt.UTC().Format(time.RFC3339), err)
+		}
+
 		if _, err := stmt.Exec(
 			reading.ObservedAt.UTC(),
 			reading.PM25,
@@ -53,17 +69,18 @@ func (s *Store) UpsertAirQualityReadings(readings []ecowitt.AirQualityReading) (
 			nullFloat(reading.HasPM25Avg24H, reading.PM25Avg24H),
 			nullString(reading.SourceFieldKey),
 		); err != nil {
-			tx.Rollback()
 			return 0, fmt.Errorf("upsert air quality reading at %s: %w", reading.ObservedAt.UTC().Format(time.RFC3339), err)
 		}
-		stored++
+		if !alreadyExists {
+			inserted++
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit air quality upserts: %w", err)
 	}
 
-	return stored, nil
+	return inserted, nil
 }
 
 // GetLatestAirQualityReading returns the most recent stored WH41 reading.
@@ -166,4 +183,16 @@ func nullString(value string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: value, Valid: true}
+}
+
+func airQualityReadingExists(stmt *sql.Stmt, observedAt time.Time) (bool, error) {
+	var existing int
+	err := stmt.QueryRow(observedAt).Scan(&existing)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }

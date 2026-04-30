@@ -71,3 +71,49 @@ func TestUpsertAirQualityReadings_MergesHistoricalAndLiveData(t *testing.T) {
 		t.Fatalf("range RealTimeAQI = %d, want 96", readings[0].RealTimeAQI)
 	}
 }
+
+func TestUpsertAirQualityReadings_CountsOnlyNewRows(t *testing.T) {
+	store := setupTestStore(t)
+
+	observedAt := time.Date(2026, 4, 30, 4, 0, 0, 0, time.UTC)
+	history := ecowitt.AirQualityReading{
+		ObservedAt:     observedAt,
+		PM25:           32.5,
+		SourceFieldKey: "pm25_ch1",
+	}
+	inserted, err := store.UpsertAirQualityReadings([]ecowitt.AirQualityReading{history})
+	if err != nil {
+		t.Fatalf("UpsertAirQualityReadings(history): %v", err)
+	}
+	if inserted != 1 {
+		t.Fatalf("inserted = %d, want 1", inserted)
+	}
+
+	live := ecowitt.AirQualityReading{
+		ObservedAt:     observedAt,
+		PM25:           32.5,
+		RealTimeAQI:    96,
+		HasRealTimeAQI: true,
+		SourceFieldKey: "pm25_ch1",
+	}
+	inserted, err = store.UpsertAirQualityReadings([]ecowitt.AirQualityReading{live})
+	if err != nil {
+		t.Fatalf("UpsertAirQualityReadings(live): %v", err)
+	}
+	if inserted != 0 {
+		t.Fatalf("inserted = %d, want 0 for update-only upsert", inserted)
+	}
+
+	second := ecowitt.AirQualityReading{
+		ObservedAt:     observedAt.Add(5 * time.Minute),
+		PM25:           20.1,
+		SourceFieldKey: "pm25_ch1",
+	}
+	inserted, err = store.UpsertAirQualityReadings([]ecowitt.AirQualityReading{history, second})
+	if err != nil {
+		t.Fatalf("UpsertAirQualityReadings(mixed): %v", err)
+	}
+	if inserted != 1 {
+		t.Fatalf("inserted = %d, want 1 for one existing and one new row", inserted)
+	}
+}

@@ -96,7 +96,10 @@ func (s *Server) handleWeatherImage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveBannerImage(w http.ResponseWriter, data []byte) {
 	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Cache-Control", "public, max-age=3600")
+	// The `/weather-image` endpoint uses a stable URL while the underlying image
+	// can change as weather and smoke conditions evolve, so only the server-side
+	// cache should retain it.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Write(data)
 }
 
@@ -268,12 +271,8 @@ func parseSmokeOverride(override string) (forecast.SmokeLevel, bool) {
 }
 
 func (s *Server) getCurrentSmokeLevel(now time.Time) forecast.SmokeLevel {
-	reading, err := s.store.GetLatestAirQualityReading()
-	if err != nil {
-		log.Printf("weather-image: get stored air quality: %v", err)
-		return forecast.SmokeClear
-	}
-	if airQualityIsStale(reading, now) {
+	reading := s.currentAirQuality(now)
+	if reading == nil {
 		return forecast.SmokeClear
 	}
 	return forecast.SmokeLevelFromAirQuality(reading.RealTimeAQI, reading.HasRealTimeAQI, reading.PM25)

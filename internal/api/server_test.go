@@ -282,6 +282,7 @@ func TestCurrentPartial_IncludesAirQuality(t *testing.T) {
 
 	srv := api.NewServer(s, "8080", loc, fakeAirQualityProvider{
 		reading: &ecowitt.AirQualityReading{
+			ObservedAt:     time.Now().UTC().Add(-5 * time.Minute),
 			PM25:           2.8,
 			RealTimeAQI:    12,
 			HasRealTimeAQI: true,
@@ -354,6 +355,61 @@ func TestCurrentPartial_FallsBackToStoredAirQuality(t *testing.T) {
 	}
 }
 
+func TestCurrentPartial_IgnoresStaleLiveAirQualityReading(t *testing.T) {
+	t.Parallel()
+
+	s, loc := setupTestStore(t)
+	if err := s.UpsertStation(models.Station{StationID: "PRIMARY", Name: "Primary", ElevationTier: "valley_floor", IsPrimary: true, Active: true}); err != nil {
+		t.Fatalf("upsert primary station: %v", err)
+	}
+	insertObservation(t, s, "PRIMARY", time.Now().UTC().Add(-5*time.Minute), 13)
+
+	if _, err := s.UpsertAirQualityReadings([]ecowitt.AirQualityReading{{
+		ObservedAt:     time.Now().UTC().Add(-10 * time.Minute),
+		PM25:           18.4,
+		RealTimeAQI:    61,
+		HasRealTimeAQI: true,
+		AQI24H:         55,
+		HasAQI24H:      true,
+		Category:       "Moderate",
+		CategoryClass:  "moderate",
+		SourceFieldKey: "pm25_ch1",
+	}}); err != nil {
+		t.Fatalf("UpsertAirQualityReadings: %v", err)
+	}
+
+	srv := api.NewServer(s, "8080", loc, fakeAirQualityProvider{
+		reading: &ecowitt.AirQualityReading{
+			ObservedAt:     time.Now().UTC().Add(-2 * time.Hour),
+			PM25:           99.9,
+			RealTimeAQI:    188,
+			HasRealTimeAQI: true,
+			Category:       "Unhealthy",
+			CategoryClass:  "unhealthy",
+		},
+		err: errors.New("stale cached live value"),
+	})
+
+	req := httptest.NewRequest("GET", "/partials/current", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "AQI 61") {
+		t.Fatalf("expected stored AQI to win over stale live reading, body=%q", body)
+	}
+	if strings.Contains(body, "AQI 188") {
+		t.Fatalf("did not expect stale live AQI in current partial, body=%q", body)
+	}
+	if strings.Contains(body, "PM2.5 99.9 ug/m3") {
+		t.Fatalf("did not expect stale live PM2.5 in current partial, body=%q", body)
+	}
+}
+
 func TestChartPartial_IncludesAirQualityChart(t *testing.T) {
 	t.Parallel()
 
@@ -391,6 +447,44 @@ func TestChartPartial_IncludesAirQualityChart(t *testing.T) {
 	}
 	if !strings.Contains(body, "label: 'AQI'") {
 		t.Fatalf("expected AQI dataset in chart script, body=%q", body)
+	}
+}
+
+func TestChartPartial_RendersPM25OnlyAirQualityChart(t *testing.T) {
+	t.Parallel()
+
+	s, loc := setupTestStore(t)
+	if err := s.UpsertStation(models.Station{StationID: "PRIMARY", Name: "Primary", ElevationTier: "valley_floor", IsPrimary: true, Active: true}); err != nil {
+		t.Fatalf("upsert primary station: %v", err)
+	}
+	insertObservation(t, s, "PRIMARY", time.Now().UTC().Add(-10*time.Minute), 14)
+
+	if _, err := s.UpsertAirQualityReadings([]ecowitt.AirQualityReading{{
+		ObservedAt:     time.Now().UTC().Add(-10 * time.Minute),
+		PM25:           27.4,
+		SourceFieldKey: "pm25_ch1",
+	}}); err != nil {
+		t.Fatalf("UpsertAirQualityReadings: %v", err)
+	}
+
+	srv := api.NewServer(s, "8080", loc, nil)
+	req := httptest.NewRequest("GET", "/partials/chart", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Last 24 Hours — Air Quality") {
+		t.Fatalf("expected air quality chart heading, body=%q", body)
+	}
+	if !strings.Contains(body, "airQualityChart") {
+		t.Fatalf("expected air quality chart canvas, body=%q", body)
+	}
+	if !strings.Contains(body, `"has_aqi":false`) {
+		t.Fatalf("expected PM2.5-only chart data to mark has_aqi false, body=%q", body)
 	}
 }
 
