@@ -275,6 +275,55 @@ func TestConditionWithTime(t *testing.T) {
 	}
 }
 
+func TestConditionWithTimeAndSmoke(t *testing.T) {
+	tests := []struct {
+		condition WeatherCondition
+		tod       TimeOfDay
+		smoke     SmokeLevel
+		want      WeatherCondition
+	}{
+		{ConditionClearWarm, TimeDay, SmokeClear, "clear_warm_day_clear"},
+		{ConditionMostlyCloudy, TimeDusk, SmokeHaze, "mostly_cloudy_dusk_haze"},
+		{ConditionFog, TimeNight, SmokeDense, "fog_night_dense_smoke"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.want), func(t *testing.T) {
+			got := ConditionWithTimeAndSmoke(tt.condition, tt.tod, tt.smoke)
+			if got != tt.want {
+				t.Errorf("ConditionWithTimeAndSmoke() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSmokeLevelFromAirQuality(t *testing.T) {
+	tests := []struct {
+		name   string
+		aqi    int
+		hasAQI bool
+		pm25   float64
+		want   SmokeLevel
+	}{
+		{name: "clear from AQI", aqi: 35, hasAQI: true, pm25: 6, want: SmokeClear},
+		{name: "haze from AQI", aqi: 72, hasAQI: true, pm25: 18, want: SmokeHaze},
+		{name: "smoke from AQI", aqi: 139, hasAQI: true, pm25: 51, want: SmokeVisible},
+		{name: "dense smoke from AQI", aqi: 188, hasAQI: true, pm25: 77, want: SmokeDense},
+		{name: "pm25 fallback haze", aqi: 0, hasAQI: false, pm25: 18, want: SmokeHaze},
+		{name: "pm25 fallback smoke", aqi: 0, hasAQI: false, pm25: 51, want: SmokeVisible},
+		{name: "pm25 fallback dense smoke", aqi: 0, hasAQI: false, pm25: 80, want: SmokeDense},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SmokeLevelFromAirQuality(tt.aqi, tt.hasAQI, tt.pm25)
+			if got != tt.want {
+				t.Errorf("SmokeLevelFromAirQuality() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildPromptWithTime(t *testing.T) {
 	prompt := BuildPromptWithTime(ConditionClearWarm, TimeNight)
 	if prompt == "" {
@@ -300,6 +349,21 @@ func TestBuildPromptWithTimeAndMoon(t *testing.T) {
 	dayPrompt := BuildPromptWithTimeAndMoon(ConditionClearWarm, TimeDay, MoonFull)
 	if dayPrompt == "" {
 		t.Error("BuildPromptWithTimeAndMoon() for day returned empty string")
+	}
+}
+
+func TestBuildPromptWithTimeAndMoonAndSmoke(t *testing.T) {
+	prompt := BuildPromptWithTimeAndMoonAndSmoke(ConditionMostlyCloudy, TimeDusk, MoonFull, SmokeVisible)
+	if prompt == "" {
+		t.Fatal("BuildPromptWithTimeAndMoonAndSmoke() returned empty string")
+	}
+	if !strings.Contains(prompt, "Visible woodsmoke hangs through the valley") {
+		t.Fatalf("expected smoke prompt detail, got %q", prompt)
+	}
+
+	clearPrompt := BuildPromptWithTimeAndMoonAndSmoke(ConditionClearCool, TimeDay, MoonFull, SmokeClear)
+	if strings.Contains(clearPrompt, "woodsmoke") {
+		t.Fatalf("clear-air prompt should not mention woodsmoke, got %q", clearPrompt)
 	}
 }
 

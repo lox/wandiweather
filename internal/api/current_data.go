@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/lox/wandiweather/internal/ecowitt"
 	"github.com/lox/wandiweather/internal/forecast"
 	"github.com/lox/wandiweather/internal/models"
 )
@@ -17,6 +18,13 @@ func observationIsStale(obs *models.Observation, now time.Time) bool {
 		return true
 	}
 	return now.Sub(obs.ObservedAt) > staleObservationThreshold
+}
+
+func airQualityIsStale(reading *ecowitt.AirQualityReading, now time.Time) bool {
+	if reading == nil {
+		return true
+	}
+	return now.Sub(reading.ObservedAt) > staleObservationThreshold
 }
 
 // getCurrentData aggregates all current weather data for display.
@@ -163,6 +171,22 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 			} else if temp <= 10 && data.Primary.WindChill.Valid {
 				data.FeelsLike = &data.Primary.WindChill.Float64
 			}
+		}
+	}
+
+	if reading, err := s.store.GetLatestAirQualityReading(); err != nil {
+		log.Printf("get stored air quality: %v", err)
+	} else if !airQualityIsStale(reading, now) {
+		data.AirQuality = reading
+	}
+
+	if s.airQuality != nil {
+		reading, err := s.airQuality.CurrentAirQuality()
+		if err != nil {
+			log.Printf("get current air quality: %v", err)
+		}
+		if reading != nil {
+			data.AirQuality = reading
 		}
 	}
 

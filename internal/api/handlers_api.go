@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -34,6 +35,30 @@ func (s *Server) handleAPIHistory(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(observations)
+}
+
+func (s *Server) handleAPIAirQuality(w http.ResponseWriter, r *http.Request) {
+	hours := 24
+	if rawHours := r.URL.Query().Get("hours"); rawHours != "" {
+		parsed, err := strconv.Atoi(rawHours)
+		if err != nil || parsed <= 0 {
+			http.Error(w, "invalid hours", http.StatusBadRequest)
+			return
+		}
+		hours = parsed
+	}
+
+	end := time.Now()
+	start := end.Add(-time.Duration(hours) * time.Hour)
+
+	readings, err := s.store.GetAirQualityReadings(start, end)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(readings)
 }
 
 func (s *Server) handleAPIStations(w http.ResponseWriter, r *http.Request) {

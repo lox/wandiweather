@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/lox/wandiweather/internal/ecowitt"
 	"github.com/lox/wandiweather/internal/emergency"
 	"github.com/lox/wandiweather/internal/firedanger"
 	"github.com/lox/wandiweather/internal/forecast"
@@ -25,6 +26,7 @@ type CurrentData struct {
 	TodayForecast  *TodayForecast
 	TodayStats     *TodayStats
 	RainHistory    *store.RainHistory
+	AirQuality     *ecowitt.AirQualityReading
 	LastUpdated    time.Time
 	Moon           *MoonData
 	Alerts         []emergency.Alert
@@ -117,10 +119,11 @@ type ForecastDay struct {
 	PrecipDisplay      string   `json:"precip_display,omitempty"`
 }
 
-// ChartData contains data for the temperature chart.
+// ChartData contains data for the dashboard charts.
 type ChartData struct {
-	Labels []string      `json:"labels"`
-	Series []ChartSeries `json:"series"`
+	Labels     []string             `json:"labels"`
+	Series     []ChartSeries        `json:"series"`
+	AirQuality *AirQualityChartData `json:"air_quality,omitempty"`
 }
 
 // ChartSeries represents a single series in the chart.
@@ -128,6 +131,14 @@ type ChartSeries struct {
 	Name  string    `json:"name"`
 	Data  []float64 `json:"data"`
 	Color string    `json:"color"`
+}
+
+// AirQualityChartData contains the 24-hour Ecowitt chart series.
+type AirQualityChartData struct {
+	Labels []string   `json:"labels"`
+	PM25   []float64  `json:"pm25"`
+	AQI    []*float64 `json:"aqi,omitempty"`
+	HasAQI bool       `json:"has_aqi"`
 }
 
 // AccuracyData contains forecast verification statistics.

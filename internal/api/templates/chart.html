@@ -1,34 +1,127 @@
-<h2>Last 24 Hours — Temperature by Elevation</h2>
-<div class="chart-container">
-    <canvas id="tempChart"></canvas>
+<div class="chart-stack">
+    <div class="chart-card">
+        <h2>Last 24 Hours — Temperature by Elevation</h2>
+        <div class="chart-container">
+            <canvas id="tempChart"></canvas>
+        </div>
+    </div>
+
+    {{if .AirQuality}}
+    <div class="chart-card">
+        <h2>Last 24 Hours — Air Quality</h2>
+        <div class="chart-container">
+            <canvas id="airQualityChart"></canvas>
+        </div>
+    </div>
+    {{end}}
 </div>
+
 <script>
 (function() {
-    const ctx = document.getElementById('tempChart').getContext('2d');
-    const labels = [{{range $i, $l := .Labels}}{{if $i}},{{end}}"{{$l}}"{{end}}];
-    const datasets = [
-        {{range $i, $s := .Series}}
-        {{if $i}},{{end}}{
-            label: '{{$s.Name}}',
-            data: [{{range $j, $v := $s.Data}}{{if $j}},{{end}}{{$v}}{{end}}],
-            borderColor: '{{$s.Color}}',
-            backgroundColor: '{{$s.Color}}22',
+    const styles = getComputedStyle(document.documentElement);
+    const textColor = styles.getPropertyValue('--text-muted').trim() || '#888';
+    const gridColor = styles.getPropertyValue('--card-border').trim() || '#1f4068';
+
+    const tempLabels = {{json .Labels}};
+    const tempSeries = {{json .Series}};
+    const tempDatasets = tempSeries.map(function(series) {
+        return {
+            label: series.name,
+            data: series.data,
+            borderColor: series.color,
+            backgroundColor: series.color + '22',
             fill: false,
             tension: 0.3,
             pointRadius: 0,
             pointHitRadius: 10,
             borderWidth: 2
-        }
-        {{end}}
-    ];
-    
+        };
+    });
+
     if (window.tempChartInstance) {
         window.tempChartInstance.destroy();
     }
-    
-    window.tempChartInstance = new Chart(ctx, {
+
+    const tempCanvas = document.getElementById('tempChart');
+    if (tempCanvas) {
+        window.tempChartInstance = new Chart(tempCanvas.getContext('2d'), {
+            type: 'line',
+            data: { labels: tempLabels, datasets: tempDatasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: { color: textColor, boxWidth: 12 }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: textColor, maxTicksLimit: 12 },
+                        grid: { color: gridColor }
+                    },
+                    y: {
+                        ticks: { color: textColor },
+                        grid: { color: gridColor }
+                    }
+                }
+            }
+        });
+    }
+
+    if (window.airQualityChartInstance) {
+        window.airQualityChartInstance.destroy();
+        window.airQualityChartInstance = null;
+    }
+
+    const airQuality = {{json .AirQuality}};
+    const airQualityCanvas = document.getElementById('airQualityChart');
+    if (!airQuality || !airQualityCanvas) {
+        return;
+    }
+
+    const airQualityDatasets = [{
+        label: 'PM2.5 (ug/m3)',
+        data: airQuality.pm25,
+        yAxisID: 'pm25',
+        borderColor: '#38bdf8',
+        backgroundColor: '#38bdf822',
+        fill: false,
+        tension: 0.25,
+        pointRadius: 0,
+        pointHitRadius: 10,
+        borderWidth: 2
+    }];
+
+    if (airQuality.has_aqi) {
+        airQualityDatasets.push({
+            label: 'AQI',
+            data: airQuality.aqi,
+            yAxisID: 'aqi',
+            borderColor: '#f59e0b',
+            backgroundColor: '#f59e0b22',
+            fill: false,
+            tension: 0.25,
+            pointRadius: 0,
+            pointHitRadius: 10,
+            borderWidth: 2,
+            borderDash: [6, 4],
+            spanGaps: false
+        });
+    }
+
+    window.airQualityChartInstance = new Chart(airQualityCanvas.getContext('2d'), {
         type: 'line',
-        data: { labels, datasets },
+        data: {
+            labels: airQuality.labels,
+            datasets: airQualityDatasets
+        },
         options: {
             responsive: true,
             maintainAspectRatio: false,
@@ -40,17 +133,38 @@
                 legend: {
                     display: true,
                     position: 'top',
-                    labels: { color: '#888', boxWidth: 12 }
+                    labels: { color: textColor, boxWidth: 12 }
                 }
             },
             scales: {
                 x: {
-                    ticks: { color: '#888', maxTicksLimit: 12 },
-                    grid: { color: '#1f4068' }
+                    ticks: { color: textColor, maxTicksLimit: 12 },
+                    grid: { color: gridColor }
                 },
-                y: {
-                    ticks: { color: '#888' },
-                    grid: { color: '#1f4068' }
+                pm25: {
+                    type: 'linear',
+                    position: 'left',
+                    ticks: { color: textColor },
+                    title: {
+                        display: true,
+                        text: 'PM2.5 (ug/m3)',
+                        color: textColor
+                    },
+                    grid: { color: gridColor }
+                },
+                aqi: {
+                    type: 'linear',
+                    position: 'right',
+                    display: airQuality.has_aqi,
+                    ticks: { color: textColor },
+                    title: {
+                        display: airQuality.has_aqi,
+                        text: 'AQI',
+                        color: textColor
+                    },
+                    grid: { drawOnChartArea: false },
+                    suggestedMin: 0,
+                    suggestedMax: 150
                 }
             }
         }

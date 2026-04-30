@@ -92,6 +92,30 @@ func (s *Server) handleChartPartial(w http.ResponseWriter, r *http.Request) {
 		chartData.Series = append(chartData.Series, series)
 	}
 
+	if readings, err := s.store.GetAirQualityReadings(start, end); err != nil {
+		log.Printf("chart partial: get air quality readings: %v", err)
+	} else if len(readings) > 0 {
+		aqChart := &AirQualityChartData{
+			Labels: make([]string, 0, len(readings)),
+			PM25:   make([]float64, 0, len(readings)),
+			AQI:    make([]*float64, 0, len(readings)),
+		}
+
+		for _, reading := range readings {
+			aqChart.Labels = append(aqChart.Labels, reading.ObservedAt.In(s.loc).Format("3:04 PM"))
+			aqChart.PM25 = append(aqChart.PM25, reading.PM25)
+			if reading.HasRealTimeAQI {
+				aqi := float64(reading.RealTimeAQI)
+				aqChart.AQI = append(aqChart.AQI, &aqi)
+				aqChart.HasAQI = true
+				continue
+			}
+			aqChart.AQI = append(aqChart.AQI, nil)
+		}
+
+		chartData.AirQuality = aqChart
+	}
+
 	s.tmpl.ExecuteTemplate(w, "chart.html", chartData)
 }
 
