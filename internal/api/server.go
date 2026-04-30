@@ -87,6 +87,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/accuracy", s.handleAccuracy)
 	mux.HandleFunc("/data", s.handleData)
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/weather-image-previews", s.handleWeatherImagePreviews)
 
 	// Partials (HTMX)
 	mux.HandleFunc("/partials/current", s.handleCurrentPartial)

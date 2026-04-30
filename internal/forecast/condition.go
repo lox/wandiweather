@@ -33,6 +33,16 @@ const (
 	TimeDawn  TimeOfDay = "dawn"
 )
 
+// SmokeLevel represents how much smoke haze should influence the banner scene.
+type SmokeLevel string
+
+const (
+	SmokeClear   SmokeLevel = "clear"
+	SmokeHaze    SmokeLevel = "haze"
+	SmokeVisible SmokeLevel = "smoke"
+	SmokeDense   SmokeLevel = "dense_smoke"
+)
+
 // GetTimeOfDay returns the current time-of-day category for the given location.
 func GetTimeOfDay(t time.Time) TimeOfDay {
 	hour := t.Hour()
@@ -52,13 +62,13 @@ func GetTimeOfDay(t time.Time) TimeOfDay {
 type MoonPhase string
 
 const (
-	MoonNew           MoonPhase = "new"
+	MoonNew            MoonPhase = "new"
 	MoonWaxingCrescent MoonPhase = "waxing_crescent"
-	MoonFirstQuarter  MoonPhase = "first_quarter"
-	MoonWaxingGibbous MoonPhase = "waxing_gibbous"
-	MoonFull          MoonPhase = "full"
-	MoonWaningGibbous MoonPhase = "waning_gibbous"
-	MoonLastQuarter   MoonPhase = "last_quarter"
+	MoonFirstQuarter   MoonPhase = "first_quarter"
+	MoonWaxingGibbous  MoonPhase = "waxing_gibbous"
+	MoonFull           MoonPhase = "full"
+	MoonWaningGibbous  MoonPhase = "waning_gibbous"
+	MoonLastQuarter    MoonPhase = "last_quarter"
 	MoonWaningCrescent MoonPhase = "waning_crescent"
 )
 
@@ -70,19 +80,19 @@ const LunarCycle = 29.53
 func GetMoonPhase(t time.Time) MoonPhase {
 	// Reference new moon: January 6, 2000 18:14 UTC
 	ref := time.Date(2000, 1, 6, 18, 14, 0, 0, time.UTC)
-	
+
 	// Days since reference
 	days := t.Sub(ref).Hours() / 24
-	
+
 	// Position in current cycle (0 to ~29.53)
 	pos := days - float64(int(days/LunarCycle))*LunarCycle
 	if pos < 0 {
 		pos += LunarCycle
 	}
-	
+
 	// Divide cycle into 8 phases
 	phase := int((pos / LunarCycle) * 8)
-	
+
 	switch phase {
 	case 0:
 		return MoonNew
@@ -111,7 +121,7 @@ func MoonIllumination(t time.Time) int {
 	if pos < 0 {
 		pos += LunarCycle
 	}
-	
+
 	// Illumination follows a cosine curve
 	// 0 at new moon, 100 at full moon
 	angle := (pos / LunarCycle) * 2 * math.Pi
@@ -196,6 +206,14 @@ func ConditionWithTime(condition WeatherCondition, tod TimeOfDay) WeatherConditi
 	return WeatherCondition(fmt.Sprintf("%s_%s", condition, tod))
 }
 
+// ConditionWithTimeAndSmoke combines weather, time of day, and smoke level for image cache keys.
+func ConditionWithTimeAndSmoke(condition WeatherCondition, tod TimeOfDay, smoke SmokeLevel) WeatherCondition {
+	if smoke == "" {
+		smoke = SmokeClear
+	}
+	return WeatherCondition(fmt.Sprintf("%s_%s_%s", condition, tod, smoke))
+}
+
 // baseStylePrompt defines the consistent visual style for all generated images.
 const baseStylePrompt = `Serene watercolor landscape painting of Wandiligong valley in the Australian Alps.
 Rolling green hills with eucalyptus trees, distant mountains in soft purple haze.
@@ -225,6 +243,12 @@ var timePrompts = map[TimeOfDay]string{
 	TimeNight: "NIGHTTIME SCENE. Dark night sky, no sunlight. Moon visible. Stars scattered across deep blue-black sky. Landscape lit only by soft silvery moonlight. Dark silhouettes of trees and hills. Nocturnal, peaceful, quiet night atmosphere.",
 }
 
+var smokePrompts = map[SmokeLevel]string{
+	SmokeHaze:    "A faint woodsmoke haze lingers in the valley, slightly softening the distant ridgelines.",
+	SmokeVisible: "Visible woodsmoke hangs through the valley, reducing distant visibility and muting contrast.",
+	SmokeDense:   "Heavy woodsmoke fills the valley with a dense brown-grey veil, strongly reducing visibility and muting contrast.",
+}
+
 // BuildPrompt creates the full image generation prompt for a weather condition.
 func BuildPrompt(condition WeatherCondition) string {
 	conditionDesc, ok := conditionPrompts[condition]
@@ -241,25 +265,34 @@ func BuildPromptWithTime(condition WeatherCondition, tod TimeOfDay) string {
 		conditionDesc = conditionPrompts[ConditionClearCool]
 	}
 	timeDesc := timePrompts[tod]
-	
+
 	// Put time of day FIRST and emphasize it strongly
 	return fmt.Sprintf("%s\n\n%s\n\nWeather conditions: %s", timeDesc, baseStylePrompt, conditionDesc)
 }
 
 // BuildPromptWithTimeAndMoon creates prompt including moon phase for night scenes.
 func BuildPromptWithTimeAndMoon(condition WeatherCondition, tod TimeOfDay, moon MoonPhase) string {
+	return BuildPromptWithTimeAndMoonAndSmoke(condition, tod, moon, SmokeClear)
+}
+
+// BuildPromptWithTimeAndMoonAndSmoke creates a prompt including moon phase and smoke haze.
+func BuildPromptWithTimeAndMoonAndSmoke(condition WeatherCondition, tod TimeOfDay, moon MoonPhase, smoke SmokeLevel) string {
 	conditionDesc, ok := conditionPrompts[condition]
 	if !ok {
 		conditionDesc = conditionPrompts[ConditionClearCool]
 	}
-	
+
 	timeDesc := timePrompts[tod]
-	
+
 	// For night, add moon phase info
 	if tod == TimeNight {
 		_, moonPrompt := MoonDescription(moon)
 		timeDesc = fmt.Sprintf("NIGHTTIME SCENE. %s. Dark night sky, no sunlight. Stars scattered across deep blue-black sky. Landscape lit by moonlight. Dark silhouettes of trees and hills. Nocturnal, peaceful atmosphere.", moonPrompt)
 	}
-	
-	return fmt.Sprintf("%s\n\n%s\n\nWeather conditions: %s", timeDesc, baseStylePrompt, conditionDesc)
+
+	prompt := fmt.Sprintf("%s\n\n%s\n\nWeather conditions: %s", timeDesc, baseStylePrompt, conditionDesc)
+	if smokePrompt, ok := smokePrompts[smoke]; ok {
+		prompt += "\n\nAir quality: " + smokePrompt
+	}
+	return prompt
 }

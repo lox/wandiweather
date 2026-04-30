@@ -275,6 +275,28 @@ func TestConditionWithTime(t *testing.T) {
 	}
 }
 
+func TestConditionWithTimeAndSmoke(t *testing.T) {
+	tests := []struct {
+		condition WeatherCondition
+		tod       TimeOfDay
+		smoke     SmokeLevel
+		want      WeatherCondition
+	}{
+		{ConditionClearWarm, TimeDay, SmokeClear, "clear_warm_day_clear"},
+		{ConditionMostlyCloudy, TimeDusk, SmokeHaze, "mostly_cloudy_dusk_haze"},
+		{ConditionFog, TimeNight, SmokeDense, "fog_night_dense_smoke"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.want), func(t *testing.T) {
+			got := ConditionWithTimeAndSmoke(tt.condition, tt.tod, tt.smoke)
+			if got != tt.want {
+				t.Errorf("ConditionWithTimeAndSmoke() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildPromptWithTime(t *testing.T) {
 	prompt := BuildPromptWithTime(ConditionClearWarm, TimeNight)
 	if prompt == "" {
@@ -300,6 +322,21 @@ func TestBuildPromptWithTimeAndMoon(t *testing.T) {
 	dayPrompt := BuildPromptWithTimeAndMoon(ConditionClearWarm, TimeDay, MoonFull)
 	if dayPrompt == "" {
 		t.Error("BuildPromptWithTimeAndMoon() for day returned empty string")
+	}
+}
+
+func TestBuildPromptWithTimeAndMoonAndSmoke(t *testing.T) {
+	prompt := BuildPromptWithTimeAndMoonAndSmoke(ConditionMostlyCloudy, TimeDusk, MoonFull, SmokeVisible)
+	if prompt == "" {
+		t.Fatal("BuildPromptWithTimeAndMoonAndSmoke() returned empty string")
+	}
+	if !strings.Contains(prompt, "Visible woodsmoke hangs through the valley") {
+		t.Fatalf("expected smoke prompt detail, got %q", prompt)
+	}
+
+	clearPrompt := BuildPromptWithTimeAndMoonAndSmoke(ConditionClearCool, TimeDay, MoonFull, SmokeClear)
+	if strings.Contains(clearPrompt, "woodsmoke") {
+		t.Fatalf("clear-air prompt should not mention woodsmoke, got %q", clearPrompt)
 	}
 }
 

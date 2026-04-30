@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Image Previews - WandiWeather</title>
+    <style>
+        :root {
+            --paper: #f2ead9;
+            --paper-deep: #e5d7bd;
+            --card: rgba(255, 250, 241, 0.84);
+            --card-strong: rgba(255, 247, 233, 0.96);
+            --ink: #201811;
+            --muted: #6f6254;
+            --line: rgba(68, 47, 23, 0.14);
+            --accent: #b5522d;
+            --accent-soft: #f0d4a7;
+            --shadow: 0 24px 60px rgba(61, 42, 23, 0.12);
+        }
+        * { box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            color: var(--ink);
+            font-family: "Avenir Next", "Gill Sans", "Trebuchet MS", sans-serif;
+            background:
+                radial-gradient(circle at top, rgba(255, 249, 238, 0.95), rgba(242, 234, 217, 0.92) 34%, rgba(229, 215, 189, 0.95) 100%),
+                repeating-linear-gradient(90deg, rgba(255,255,255,0.15) 0 1px, transparent 1px 36px);
+        }
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: linear-gradient(180deg, rgba(255,255,255,0.28), transparent 20%, rgba(82,55,28,0.05));
+            mix-blend-mode: soft-light;
+        }
+        a { color: inherit; }
+        .page {
+            width: min(1360px, calc(100vw - 2rem));
+            margin: 0 auto;
+            padding: 1.25rem 0 3rem;
+        }
+        .hero {
+            position: relative;
+            overflow: hidden;
+            border: 1px solid var(--line);
+            border-radius: 28px;
+            padding: clamp(1.5rem, 3vw, 3rem);
+            background:
+                linear-gradient(145deg, rgba(255,255,255,0.62), rgba(255,247,233,0.28)),
+                radial-gradient(circle at right top, rgba(181,82,45,0.14), transparent 32%),
+                radial-gradient(circle at left bottom, rgba(77, 121, 135, 0.1), transparent 28%),
+                var(--card-strong);
+            box-shadow: var(--shadow);
+        }
+        .hero::after {
+            content: "";
+            position: absolute;
+            inset: auto -3rem -3rem auto;
+            width: 14rem;
+            height: 14rem;
+            border-radius: 999px;
+            background: radial-gradient(circle, rgba(181,82,45,0.18), rgba(181,82,45,0));
+        }
+        .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.4rem 0.7rem;
+            border-radius: 999px;
+            border: 1px solid rgba(181,82,45,0.24);
+            background: rgba(255,255,255,0.45);
+            color: var(--accent);
+            font-size: 0.78rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+        h1, h2 {
+            margin: 0;
+            font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+        }
+        h1 {
+            max-width: 11ch;
+            margin-top: 1rem;
+            font-size: clamp(2.8rem, 7vw, 5.4rem);
+            line-height: 0.92;
+        }
+        .hero-copy {
+            max-width: 62rem;
+            margin-top: 1rem;
+            font-size: 1.02rem;
+            line-height: 1.7;
+            color: var(--muted);
+        }
+        .hero-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.8fr) minmax(260px, 1fr);
+            gap: 1.5rem;
+            align-items: end;
+        }
+        .stats {
+            display: grid;
+            gap: 0.9rem;
+        }
+        .stat {
+            padding: 1rem 1.1rem;
+            border-radius: 18px;
+            border: 1px solid var(--line);
+            background: rgba(255,255,255,0.56);
+            backdrop-filter: blur(10px);
+        }
+        .stat-label {
+            display: block;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.09em;
+            color: var(--muted);
+        }
+        .stat-value {
+            display: block;
+            margin-top: 0.35rem;
+            font-size: 2rem;
+            font-weight: 700;
+        }
+        .stat-note {
+            margin-top: 0.25rem;
+            font-size: 0.92rem;
+            line-height: 1.5;
+            color: var(--muted);
+        }
+        .jump-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            margin-top: 1.4rem;
+        }
+        .jump-links a {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            padding: 0.72rem 0.95rem;
+            border-radius: 999px;
+            border: 1px solid var(--line);
+            background: rgba(255,255,255,0.44);
+            text-decoration: none;
+            font-size: 0.88rem;
+            font-weight: 600;
+            transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+        }
+        .jump-links a:hover {
+            transform: translateY(-1px);
+            border-color: rgba(181,82,45,0.35);
+            background: rgba(255,255,255,0.66);
+        }
+        section {
+            margin-top: 2rem;
+        }
+        .section-head {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            gap: 0.8rem;
+            align-items: end;
+            margin-bottom: 1rem;
+        }
+        .section-kicker {
+            font-size: 0.74rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--accent);
+        }
+        .section-title {
+            font-size: clamp(1.8rem, 3vw, 2.6rem);
+        }
+        .section-copy {
+            max-width: 44rem;
+            color: var(--muted);
+            line-height: 1.65;
+        }
+        .rows {
+            display: grid;
+            gap: 1rem;
+        }
+        .row {
+            display: grid;
+            grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+            gap: 1rem;
+            padding: 1rem;
+            border-radius: 24px;
+            border: 1px solid var(--line);
+            background: var(--card);
+            box-shadow: 0 16px 40px rgba(61, 42, 23, 0.08);
+        }
+        .row-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 0.7rem;
+            padding-right: 0.25rem;
+        }
+        .row-meta h3 {
+            margin: 0;
+            font-size: 1.28rem;
+            font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+        }
+        .row-meta p {
+            margin: 0;
+            color: var(--muted);
+            line-height: 1.6;
+        }
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+            gap: 0.9rem;
+        }
+        .card {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            border-radius: 18px;
+            overflow: hidden;
+            border: 1px solid rgba(68, 47, 23, 0.12);
+            background: rgba(255,255,255,0.7);
+        }
+        .card a {
+            text-decoration: none;
+        }
+        .card img {
+            display: block;
+            width: 100%;
+            aspect-ratio: 3 / 2;
+            object-fit: cover;
+            background: linear-gradient(135deg, rgba(229,215,189,0.85), rgba(210,195,170,0.85));
+        }
+        .card-body {
+            display: grid;
+            gap: 0.55rem;
+            padding: 0.8rem 0.9rem 0.95rem;
+        }
+        .card-title-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 0.75rem;
+            align-items: baseline;
+        }
+        .card-title {
+            font-size: 1rem;
+            font-weight: 700;
+        }
+        .card-detail {
+            color: var(--muted);
+            font-size: 0.86rem;
+            line-height: 1.5;
+        }
+        code {
+            padding: 0.12rem 0.38rem;
+            border-radius: 6px;
+            background: rgba(32, 24, 17, 0.06);
+            color: #3f2b17;
+            font-family: "SFMono-Regular", "Menlo", "Monaco", monospace;
+            font-size: 0.82em;
+        }
+        .query-code {
+            display: block;
+            padding: 0.6rem 0.65rem;
+            border-radius: 12px;
+            background: rgba(32, 24, 17, 0.06);
+            color: #3f2b17;
+            font-family: "SFMono-Regular", "Menlo", "Monaco", monospace;
+            font-size: 0.75rem;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
+        }
+        .card-link {
+            color: var(--accent);
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+        .footer-note {
+            margin-top: 2rem;
+            padding: 1rem 1.15rem;
+            border-radius: 18px;
+            border: 1px dashed rgba(68, 47, 23, 0.2);
+            color: var(--muted);
+            background: rgba(255,255,255,0.3);
+            line-height: 1.65;
+        }
+        @media (max-width: 980px) {
+            .hero-grid,
+            .row {
+                grid-template-columns: 1fr;
+            }
+            .row-meta {
+                padding-right: 0;
+            }
+        }
+        @media (max-width: 640px) {
+            .page {
+                width: min(100vw - 1rem, 1360px);
+                padding-top: 0.5rem;
+            }
+            .hero,
+            .row {
+                border-radius: 22px;
+            }
+            .card-grid {
+                grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="page">
+        <header class="hero">
+            <div class="hero-grid">
+                <div>
+                    <div class="eyebrow">Weather Image Field Guide</div>
+                    <h1>Preview every banner scene directly from the live endpoint.</h1>
+                    <p class="hero-copy">
+                        Each tile below loads <code>/weather-image</code> with explicit query overrides, so the preview page exercises the same generation and cache path as the real site. First loads may take a minute or two while the server generates and stores a scene.
+                    </p>
+                    <nav class="jump-links">
+                        <a href="#weather-matrix">Weather + light matrix</a>
+                        <a href="#smoke-studies">Smoke studies</a>
+                    </nav>
+                </div>
+                <div class="stats">
+                    <div class="stat">
+                        <span class="stat-label">Weather / light studies</span>
+                        <span class="stat-value">{{.WeatherCount}}</span>
+                        <div class="stat-note">Ten weather conditions across dawn, day, dusk, and night.</div>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Smoke comparisons</span>
+                        <span class="stat-value">{{.SmokeCount}}</span>
+                        <div class="stat-note">Representative side-by-side haze and smoke variants using explicit <code>smoke=</code> overrides.</div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <section id="weather-matrix">
+            <div class="section-head">
+                <div>
+                    <div class="section-kicker">Matrix</div>
+                    <h2 class="section-title">Weather + Light Matrix</h2>
+                </div>
+                <p class="section-copy">Use this block to spot prompt drift across the core condition catalogue. Every row holds a single weather state, while the cards step through the site’s four time-of-day variants.</p>
+            </div>
+            <div class="rows">
+                {{range .WeatherRows}}
+                <article class="row">
+                    <div class="row-meta">
+                        <h3>{{.Title}}</h3>
+                        <p>{{.Description}}</p>
+                    </div>
+                    <div class="card-grid">
+                        {{range .Cards}}
+                        <article class="card">
+                            <a href="{{.ImageURL}}" target="_blank" rel="noreferrer">
+                                <img src="{{.ImageURL}}" alt="{{.Title}} preview" loading="lazy">
+                            </a>
+                            <div class="card-body">
+                                <div class="card-title-row">
+                                    <div class="card-title">{{.Title}}</div>
+                                </div>
+                                <div class="card-detail">{{.Detail}}</div>
+                                <code class="query-code">{{.Query}}</code>
+                                <a class="card-link" href="{{.ImageURL}}" target="_blank" rel="noreferrer">Open raw image</a>
+                            </div>
+                        </article>
+                        {{end}}
+                    </div>
+                </article>
+                {{end}}
+            </div>
+        </section>
+
+        <section id="smoke-studies">
+            <div class="section-head">
+                <div>
+                    <div class="section-kicker">Atmosphere</div>
+                    <h2 class="section-title">Smoke Studies</h2>
+                </div>
+                <p class="section-copy">These rows focus on scenes where smoke has the biggest visual impact. The cards keep weather and time fixed while stepping through the smoke override levels that the generator understands.</p>
+            </div>
+            <div class="rows">
+                {{range .SmokeRows}}
+                <article class="row">
+                    <div class="row-meta">
+                        <h3>{{.Title}}</h3>
+                        <p>{{.Description}}</p>
+                    </div>
+                    <div class="card-grid">
+                        {{range .Cards}}
+                        <article class="card">
+                            <a href="{{.ImageURL}}" target="_blank" rel="noreferrer">
+                                <img src="{{.ImageURL}}" alt="{{.Title}} preview" loading="lazy">
+                            </a>
+                            <div class="card-body">
+                                <div class="card-title-row">
+                                    <div class="card-title">{{.Title}}</div>
+                                </div>
+                                <div class="card-detail">{{.Detail}}</div>
+                                <code class="query-code">{{.Query}}</code>
+                                <a class="card-link" href="{{.ImageURL}}" target="_blank" rel="noreferrer">Open raw image</a>
+                            </div>
+                        </article>
+                        {{end}}
+                    </div>
+                </article>
+                {{end}}
+            </div>
+        </section>
+
+        <div class="footer-note">
+            The page uses direct query-string variations rather than client-side cache busting, so each preview stays inspectable and shareable. If you want a fresh render for a tile, remove the cached image from <code>data/images</code> or change the query.
+        </div>
+    </main>
+</body>
+</html>
