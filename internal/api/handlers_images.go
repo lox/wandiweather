@@ -13,13 +13,15 @@ import (
 
 // handleWeatherImage serves a weather-appropriate header image.
 // It checks cache first, generates on-demand if needed, and returns a placeholder while generating.
-// Supports ?weather=condition_time override for testing (e.g., ?weather=storm_night).
+// Supports ?weather=condition_time and ?smoke=level overrides for testing
+// (e.g., ?weather=storm_night&smoke=smoke).
 func (s *Server) handleWeatherImage(w http.ResponseWriter, r *http.Request) {
 	// Get current weather condition and time of day
 	loc := s.loc
 	now := time.Now().In(loc)
 	tod := forecast.GetTimeOfDay(now)
 	baseCondition := s.getCurrentCondition()
+	smoke := forecast.SmokeClear
 	hasOverride := false
 
 	// Check for override query param
@@ -32,8 +34,13 @@ func (s *Server) handleWeatherImage(w http.ResponseWriter, r *http.Request) {
 			baseCondition = overrideCond
 		}
 	}
+	if override := r.URL.Query().Get("smoke"); override != "" {
+		if parsed, ok := parseSmokeOverride(override); ok {
+			smoke = parsed
+		}
+	}
 
-	condition := forecast.ConditionWithTime(baseCondition, tod)
+	condition := forecast.ConditionWithTimeAndSmoke(baseCondition, tod, smoke)
 
 	// Try cache first
 	if data, ok := s.imageCache.Get(condition); ok {
@@ -45,7 +52,7 @@ func (s *Server) handleWeatherImage(w http.ResponseWriter, r *http.Request) {
 	if !hasOverride {
 		if data, ok := s.imageCache.GetAny(); ok {
 			// Trigger async generation for the correct condition
-			go s.generateAndCache(baseCondition, tod, now)
+			go s.generateAndCache(baseCondition, tod, smoke, now)
 			s.serveBannerImage(w, data)
 			return
 		}
@@ -66,7 +73,7 @@ func (s *Server) handleWeatherImage(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 
 		log.Printf("Generating first banner image for condition: %s", condition)
-		data, err := s.imageGen.Generate(ctx, baseCondition, tod, now)
+		data, err := s.imageGen.Generate(ctx, baseCondition, tod, smoke, now)
 		if err != nil {
 			log.Printf("Banner generation failed: %v", err)
 			http.Error(w, "Image generation failed", http.StatusServiceUnavailable)
@@ -88,7 +95,9 @@ func (s *Server) handleWeatherImage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveBannerImage(w http.ResponseWriter, data []byte) {
 	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Cache-Control", "public, max-age=3600")
+	// The `/weather-image` URL is stable while the underlying image can change,
+	// so only the server-side cache should retain it.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Write(data)
 }
 
@@ -142,7 +151,7 @@ func (s *Server) handleOGImage(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().In(loc)
 	tod := forecast.GetTimeOfDay(now)
 	baseCondition := s.getCurrentCondition()
-	condition := forecast.ConditionWithTime(baseCondition, tod)
+	condition := forecast.ConditionWithTimeAndSmoke(baseCondition, tod, forecast.SmokeClear)
 
 	var ogImage []byte
 
@@ -197,12 +206,12 @@ func conditionToReadable(condition forecast.WeatherCondition) string {
 	}
 }
 
-func (s *Server) generateAndCache(baseCondition forecast.WeatherCondition, tod forecast.TimeOfDay, t time.Time) {
+func (s *Server) generateAndCache(baseCondition forecast.WeatherCondition, tod forecast.TimeOfDay, smoke forecast.SmokeLevel, t time.Time) {
 	if s.imageGen == nil {
 		return
 	}
 
-	condition := forecast.ConditionWithTime(baseCondition, tod)
+	condition := forecast.ConditionWithTimeAndSmoke(baseCondition, tod, smoke)
 
 	s.genMu.Lock()
 	defer s.genMu.Unlock()
@@ -216,7 +225,7 @@ func (s *Server) generateAndCache(baseCondition forecast.WeatherCondition, tod f
 	defer cancel()
 
 	log.Printf("Background generating banner for condition: %s", condition)
-	data, err := s.imageGen.Generate(ctx, baseCondition, tod, t)
+	data, err := s.imageGen.Generate(ctx, baseCondition, tod, smoke, t)
 	if err != nil {
 		log.Printf("Background banner generation failed: %v", err)
 		return
@@ -247,6 +256,15 @@ func parseWeatherOverride(override string) (condition forecast.WeatherCondition,
 
 	// No time suffix - treat whole string as condition
 	return forecast.WeatherCondition(override), "", false
+}
+
+func parseSmokeOverride(override string) (forecast.SmokeLevel, bool) {
+	switch forecast.SmokeLevel(override) {
+	case forecast.SmokeClear, forecast.SmokeHaze, forecast.SmokeVisible, forecast.SmokeDense:
+		return forecast.SmokeLevel(override), true
+	default:
+		return "", false
+	}
 }
 
 // getCurrentCondition extracts the weather condition from today's forecast.

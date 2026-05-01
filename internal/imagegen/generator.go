@@ -34,17 +34,16 @@ func NewGenerator() (*Generator, error) {
 
 	return &Generator{
 		client: client,
-		model:  "gpt-image-1", // Using standard model for better quality
+		model:  "gpt-image-2", // Newer image model for higher-quality generations
 	}, nil
 }
 
-// Generate creates an image for the given weather condition (includes time of day).
-// The condition should already include time suffix (e.g., "clear_warm_night").
+// Generate creates an image for the given weather condition, time of day, and smoke level.
 // Returns the image as PNG bytes.
-func (g *Generator) Generate(ctx context.Context, condition forecast.WeatherCondition, tod forecast.TimeOfDay, t time.Time) ([]byte, error) {
+func (g *Generator) Generate(ctx context.Context, condition forecast.WeatherCondition, tod forecast.TimeOfDay, smoke forecast.SmokeLevel, t time.Time) ([]byte, error) {
 	moon := forecast.GetMoonPhase(t)
-	prompt := forecast.BuildPromptWithTimeAndMoon(condition, tod, moon)
-	fullCondition := forecast.ConditionWithTime(condition, tod)
+	prompt := forecast.BuildPromptWithTimeAndMoonAndSmoke(condition, tod, moon, smoke)
+	fullCondition := forecast.ConditionWithTimeAndSmoke(condition, tod, smoke)
 
 	log.Printf("Generating weather image for: %s (moon: %s)", fullCondition, moon)
 

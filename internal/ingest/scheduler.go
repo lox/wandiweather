@@ -135,8 +135,6 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 }
 
-
-
 func (s *Scheduler) ingestForecasts() {
 	if s.forecast == nil {
 		return
@@ -305,7 +303,8 @@ func (s *Scheduler) ensureWeatherImage(forecasts []models.Forecast) {
 	}
 
 	baseCondition := forecast.ExtractCondition(narrative, tempMax, tempMin)
-	condition := forecast.ConditionWithTime(baseCondition, tod)
+	smoke := forecast.SmokeClear
+	condition := forecast.ConditionWithTimeAndSmoke(baseCondition, tod, smoke)
 
 	// Check cache (quick check before spawning goroutine)
 	if _, ok := s.imageCache.Get(condition); ok {
@@ -329,7 +328,7 @@ func (s *Scheduler) ensureWeatherImage(forecasts []models.Forecast) {
 		defer cancel()
 
 		log.Printf("scheduler: pre-generating weather image for %s", condition)
-		data, err := s.imageGen.Generate(ctx, baseCondition, tod, now)
+		data, err := s.imageGen.Generate(ctx, baseCondition, tod, smoke, now)
 		if err != nil {
 			log.Printf("scheduler: image generation failed: %v", err)
 			return
