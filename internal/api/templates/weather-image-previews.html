@@ -628,22 +628,31 @@
                 }
 
                 activeLoads += 1;
-                setCardState(card, 'loading', 'Generating this scene now. The queue advances when it finishes.');
+                setCardState(card, 'loading', 'Generating this scene now. Keep this tab open while the queue advances.');
 
-                var loader = new Image();
-                loader.onload = function() {
-                    preview.src = url;
+                preview.onload = function() {
                     preview.hidden = false;
+                    preview.onload = null;
+                    preview.onerror = null;
                     setCardState(card, 'loaded', 'Ready to inspect. Use the raw image link for the full endpoint response.');
                     activeLoads -= 1;
                     processQueue();
                 };
-                loader.onerror = function() {
+                preview.onerror = function() {
+                    preview.onload = null;
+                    preview.onerror = null;
+                    preview.hidden = true;
+                    preview.removeAttribute('src');
                     setCardState(card, 'failed', 'Generation failed or timed out. Try this tile again.');
                     activeLoads -= 1;
                     processQueue();
                 };
-                loader.src = url;
+
+                // Keep the request attached to the real DOM image so the browser
+                // doesn't discard a long-running preview fetch mid-generation.
+                preview.hidden = true;
+                preview.removeAttribute('src');
+                preview.src = url;
             }
 
             function enqueueCard(card) {
