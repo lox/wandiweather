@@ -34,7 +34,7 @@ func NewGenerator() (*Generator, error) {
 
 	return &Generator{
 		client: client,
-		model:  "gpt-image-1", // Using standard model for better quality
+		model:  "gpt-image-2", // Newer image model for higher-quality generations
 	}, nil
 }
 
