@@ -225,15 +225,65 @@
             border: 1px solid rgba(68, 47, 23, 0.12);
             background: rgba(255,255,255,0.7);
         }
+        .card.is-queued {
+            border-color: rgba(181,82,45,0.28);
+        }
+        .card.is-loading {
+            border-color: rgba(181,82,45,0.36);
+            box-shadow: 0 18px 34px rgba(181,82,45,0.12);
+        }
+        .card.is-failed {
+            border-color: rgba(162, 57, 32, 0.34);
+        }
+        .card.is-loaded {
+            border-color: rgba(77, 121, 135, 0.3);
+        }
         .card a {
             text-decoration: none;
         }
-        .card img {
+        .card-media {
+            position: relative;
+            aspect-ratio: 3 / 2;
+            overflow: hidden;
+            background:
+                linear-gradient(135deg, rgba(255,255,255,0.16), rgba(32,24,17,0.05)),
+                repeating-linear-gradient(135deg, rgba(255,255,255,0.16) 0 9px, rgba(255,255,255,0) 9px 18px),
+                linear-gradient(135deg, rgba(229,215,189,0.88), rgba(210,195,170,0.88));
+        }
+        .card-media::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, rgba(255,255,255,0.22), rgba(32,24,17,0.1));
+            pointer-events: none;
+        }
+        .card-preview {
             display: block;
             width: 100%;
-            aspect-ratio: 3 / 2;
+            height: 100%;
             object-fit: cover;
-            background: linear-gradient(135deg, rgba(229,215,189,0.85), rgba(210,195,170,0.85));
+            opacity: 0;
+            transform: scale(1.02);
+            transition: opacity 0.28s ease, transform 0.35s ease;
+        }
+        .card.is-loaded .card-preview {
+            opacity: 1;
+            transform: scale(1);
+        }
+        .card-overlay {
+            position: absolute;
+            inset: 0;
+            display: grid;
+            place-items: center;
+            gap: 0.7rem;
+            padding: 1rem;
+            text-align: center;
+            background: linear-gradient(180deg, rgba(255,249,238,0.3), rgba(242,234,217,0.76));
+            transition: opacity 0.22s ease;
+        }
+        .card.is-loaded .card-overlay {
+            opacity: 0;
+            pointer-events: none;
         }
         .card-body {
             display: grid;
@@ -255,6 +305,70 @@
             font-size: 0.86rem;
             line-height: 1.5;
         }
+        .card-status {
+            max-width: 18ch;
+            color: var(--muted);
+            font-size: 0.78rem;
+            line-height: 1.45;
+        }
+        button {
+            font: inherit;
+        }
+        .preview-trigger,
+        .row-trigger {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.4rem;
+            border: 1px solid rgba(68, 47, 23, 0.15);
+            border-radius: 999px;
+            background: rgba(255,255,255,0.72);
+            color: var(--ink);
+            cursor: pointer;
+            transition: transform 0.14s ease, background 0.14s ease, border-color 0.14s ease;
+        }
+        .preview-trigger:hover,
+        .row-trigger:hover {
+            transform: translateY(-1px);
+            background: rgba(255,255,255,0.88);
+            border-color: rgba(181,82,45,0.3);
+        }
+        .preview-trigger:disabled,
+        .row-trigger:disabled {
+            cursor: default;
+            transform: none;
+            background: rgba(255,255,255,0.48);
+            color: var(--muted);
+        }
+        .preview-trigger {
+            padding: 0.72rem 0.95rem;
+            font-size: 0.84rem;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+        .preview-trigger-secondary {
+            padding: 0.5rem 0.72rem;
+            font-size: 0.74rem;
+        }
+        .row-actions {
+            display: grid;
+            gap: 0.55rem;
+            margin-top: 0.3rem;
+        }
+        .row-trigger {
+            justify-self: start;
+            padding: 0.72rem 0.95rem;
+            font-size: 0.82rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .row-note {
+            color: var(--muted);
+            font-size: 0.8rem;
+            line-height: 1.5;
+        }
         code {
             padding: 0.12rem 0.38rem;
             border-radius: 6px;
@@ -273,6 +387,13 @@
             font-size: 0.75rem;
             line-height: 1.45;
             overflow-wrap: anywhere;
+        }
+        .card-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.65rem;
+            justify-content: space-between;
+            align-items: center;
         }
         .card-link {
             color: var(--accent);
@@ -322,7 +443,7 @@
                     <div class="eyebrow">Weather Image Field Guide</div>
                     <h1>Preview every banner scene directly from the live endpoint.</h1>
                     <p class="hero-copy">
-                        Each tile below loads <code>/weather-image</code> with explicit query overrides, so the preview page exercises the same generation and cache path as the real site. First loads may take a minute or two while the server generates and stores a scene.
+                        Each tile below points at <code>/weather-image</code> with explicit query overrides, but nothing renders until you ask for it. The page queues one preview at a time so you can inspect the current model without flooding the generator with dozens of simultaneous requests.
                     </p>
                     <nav class="jump-links">
                         <a href="#weather-matrix">Weather + light matrix</a>
@@ -358,20 +479,31 @@
                     <div class="row-meta">
                         <h3>{{.Title}}</h3>
                         <p>{{.Description}}</p>
+                        <div class="row-actions">
+                            <button class="row-trigger" type="button" data-row-trigger>Queue this row</button>
+                            <div class="row-note">Loads just these four studies and lets the page render them one at a time.</div>
+                        </div>
                     </div>
                     <div class="card-grid">
                         {{range .Cards}}
-                        <article class="card">
-                            <a href="{{.ImageURL}}" target="_blank" rel="noreferrer">
-                                <img src="{{.ImageURL}}" alt="{{.Title}} preview" loading="lazy">
-                            </a>
+                        <article class="card" data-image-url="{{.ImageURL}}" data-preview-state="idle">
+                            <div class="card-media">
+                                <img class="card-preview" alt="{{.Title}} preview" hidden>
+                                <div class="card-overlay">
+                                    <button class="preview-trigger" type="button" data-preview-trigger>Generate preview</button>
+                                    <div class="card-status" data-preview-status>Idle until requested.</div>
+                                </div>
+                            </div>
                             <div class="card-body">
                                 <div class="card-title-row">
                                     <div class="card-title">{{.Title}}</div>
                                 </div>
                                 <div class="card-detail">{{.Detail}}</div>
                                 <code class="query-code">{{.Query}}</code>
-                                <a class="card-link" href="{{.ImageURL}}" target="_blank" rel="noreferrer">Open raw image</a>
+                                <div class="card-actions">
+                                    <a class="card-link" href="{{.ImageURL}}" target="_blank" rel="noreferrer">Open raw image</a>
+                                    <button class="preview-trigger preview-trigger-secondary" type="button" data-preview-trigger>Generate preview</button>
+                                </div>
                             </div>
                         </article>
                         {{end}}
@@ -395,20 +527,31 @@
                     <div class="row-meta">
                         <h3>{{.Title}}</h3>
                         <p>{{.Description}}</p>
+                        <div class="row-actions">
+                            <button class="row-trigger" type="button" data-row-trigger>Queue this row</button>
+                            <div class="row-note">Useful for comparing smoke bands without dispatching every card on the page.</div>
+                        </div>
                     </div>
                     <div class="card-grid">
                         {{range .Cards}}
-                        <article class="card">
-                            <a href="{{.ImageURL}}" target="_blank" rel="noreferrer">
-                                <img src="{{.ImageURL}}" alt="{{.Title}} preview" loading="lazy">
-                            </a>
+                        <article class="card" data-image-url="{{.ImageURL}}" data-preview-state="idle">
+                            <div class="card-media">
+                                <img class="card-preview" alt="{{.Title}} preview" hidden>
+                                <div class="card-overlay">
+                                    <button class="preview-trigger" type="button" data-preview-trigger>Generate preview</button>
+                                    <div class="card-status" data-preview-status>Idle until requested.</div>
+                                </div>
+                            </div>
                             <div class="card-body">
                                 <div class="card-title-row">
                                     <div class="card-title">{{.Title}}</div>
                                 </div>
                                 <div class="card-detail">{{.Detail}}</div>
                                 <code class="query-code">{{.Query}}</code>
-                                <a class="card-link" href="{{.ImageURL}}" target="_blank" rel="noreferrer">Open raw image</a>
+                                <div class="card-actions">
+                                    <a class="card-link" href="{{.ImageURL}}" target="_blank" rel="noreferrer">Open raw image</a>
+                                    <button class="preview-trigger preview-trigger-secondary" type="button" data-preview-trigger>Generate preview</button>
+                                </div>
                             </div>
                         </article>
                         {{end}}
@@ -419,8 +562,120 @@
         </section>
 
         <div class="footer-note">
-            The page uses direct query-string variations rather than client-side cache busting, so each preview stays inspectable and shareable. If you want a fresh render for a tile, remove the cached image from <code>data/images</code> or change the query.
+            The page still uses direct query-string variations, so every tile stays inspectable and shareable, but previews are now intentionally queued instead of auto-loaded. If you want a fresh render for a tile, remove the cached image from <code>data/images</code> or change the query.
         </div>
     </main>
+    <script>
+        (function() {
+            var queue = [];
+            var activeLoads = 0;
+            var maxConcurrentLoads = 1;
+
+            function updateButtons(card, label, disabled) {
+                card.querySelectorAll('[data-preview-trigger]').forEach(function(button) {
+                    button.textContent = label;
+                    button.disabled = disabled;
+                });
+            }
+
+            function setCardState(card, state, statusText) {
+                card.dataset.previewState = state;
+                card.classList.toggle('is-queued', state === 'queued');
+                card.classList.toggle('is-loading', state === 'loading');
+                card.classList.toggle('is-loaded', state === 'loaded');
+                card.classList.toggle('is-failed', state === 'failed');
+
+                var status = card.querySelector('[data-preview-status]');
+                if (status) {
+                    status.textContent = statusText;
+                }
+
+                switch (state) {
+                case 'queued':
+                    updateButtons(card, 'Queued', true);
+                    break;
+                case 'loading':
+                    updateButtons(card, 'Generating...', true);
+                    break;
+                case 'loaded':
+                    updateButtons(card, 'Loaded', true);
+                    break;
+                case 'failed':
+                    updateButtons(card, 'Retry preview', false);
+                    break;
+                default:
+                    updateButtons(card, 'Generate preview', false);
+                    break;
+                }
+            }
+
+            function processQueue() {
+                if (activeLoads >= maxConcurrentLoads || queue.length === 0) {
+                    return;
+                }
+
+                var card = queue.shift();
+                if (!card || card.dataset.previewState === 'loaded') {
+                    processQueue();
+                    return;
+                }
+
+                var url = card.getAttribute('data-image-url');
+                var preview = card.querySelector('.card-preview');
+                if (!url || !preview) {
+                    processQueue();
+                    return;
+                }
+
+                activeLoads += 1;
+                setCardState(card, 'loading', 'Generating this scene now. The queue advances when it finishes.');
+
+                var loader = new Image();
+                loader.onload = function() {
+                    preview.src = url;
+                    preview.hidden = false;
+                    setCardState(card, 'loaded', 'Ready to inspect. Use the raw image link for the full endpoint response.');
+                    activeLoads -= 1;
+                    processQueue();
+                };
+                loader.onerror = function() {
+                    setCardState(card, 'failed', 'Generation failed or timed out. Try this tile again.');
+                    activeLoads -= 1;
+                    processQueue();
+                };
+                loader.src = url;
+            }
+
+            function enqueueCard(card) {
+                if (!card) {
+                    return;
+                }
+
+                var state = card.dataset.previewState;
+                if (state === 'queued' || state === 'loading' || state === 'loaded') {
+                    return;
+                }
+
+                setCardState(card, 'queued', 'Queued. This page renders one preview request at a time.');
+                queue.push(card);
+                processQueue();
+            }
+
+            document.addEventListener('click', function(event) {
+                var previewButton = event.target.closest('[data-preview-trigger]');
+                if (previewButton) {
+                    event.preventDefault();
+                    enqueueCard(previewButton.closest('.card'));
+                    return;
+                }
+
+                var rowButton = event.target.closest('[data-row-trigger]');
+                if (rowButton) {
+                    event.preventDefault();
+                    rowButton.closest('.row').querySelectorAll('.card').forEach(enqueueCard);
+                }
+            });
+        })();
+    </script>
 </body>
 </html>
