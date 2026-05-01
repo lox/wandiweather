@@ -443,7 +443,7 @@
                     <div class="eyebrow">Weather Image Field Guide</div>
                     <h1>Preview every banner scene directly from the live endpoint.</h1>
                     <p class="hero-copy">
-                        Each tile below points at <code>/weather-image</code> with explicit query overrides, but nothing renders until you ask for it. The page queues one preview at a time so you can inspect the current model without flooding the generator with dozens of simultaneous requests.
+                        Each tile below points at <code>/weather-image</code> with explicit query overrides, and all previews start queueing when the page opens. The page still runs one request at a time so the full sheet fills in automatically without flooding the generator with dozens of simultaneous requests.
                     </p>
                     <nav class="jump-links">
                         <a href="#weather-matrix">Weather + light matrix</a>
@@ -480,8 +480,8 @@
                         <h3>{{.Title}}</h3>
                         <p>{{.Description}}</p>
                         <div class="row-actions">
-                            <button class="row-trigger" type="button" data-row-trigger>Queue this row</button>
-                            <div class="row-note">Loads just these four studies and lets the page render them one at a time.</div>
+                            <button class="row-trigger" type="button" data-row-trigger>Requeue this row</button>
+                            <div class="row-note">This row starts loading automatically. Use this control to retry just these four studies.</div>
                         </div>
                     </div>
                     <div class="card-grid">
@@ -490,8 +490,8 @@
                             <div class="card-media">
                                 <img class="card-preview" alt="{{.Title}} preview" hidden>
                                 <div class="card-overlay">
-                                    <button class="preview-trigger" type="button" data-preview-trigger>Generate preview</button>
-                                    <div class="card-status" data-preview-status>Idle until requested.</div>
+                                    <button class="preview-trigger" type="button" data-preview-trigger>Requeue preview</button>
+                                    <div class="card-status" data-preview-status>Queued automatically on page load.</div>
                                 </div>
                             </div>
                             <div class="card-body">
@@ -502,7 +502,7 @@
                                 <code class="query-code">{{.Query}}</code>
                                 <div class="card-actions">
                                     <a class="card-link" href="{{.ImageURL}}" target="_blank" rel="noreferrer">Open raw image</a>
-                                    <button class="preview-trigger preview-trigger-secondary" type="button" data-preview-trigger>Generate preview</button>
+                                    <button class="preview-trigger preview-trigger-secondary" type="button" data-preview-trigger>Requeue preview</button>
                                 </div>
                             </div>
                         </article>
@@ -528,8 +528,8 @@
                         <h3>{{.Title}}</h3>
                         <p>{{.Description}}</p>
                         <div class="row-actions">
-                            <button class="row-trigger" type="button" data-row-trigger>Queue this row</button>
-                            <div class="row-note">Useful for comparing smoke bands without dispatching every card on the page.</div>
+                            <button class="row-trigger" type="button" data-row-trigger>Requeue this row</button>
+                            <div class="row-note">These smoke studies also start automatically. Use this to rerun just this comparison strip.</div>
                         </div>
                     </div>
                     <div class="card-grid">
@@ -538,8 +538,8 @@
                             <div class="card-media">
                                 <img class="card-preview" alt="{{.Title}} preview" hidden>
                                 <div class="card-overlay">
-                                    <button class="preview-trigger" type="button" data-preview-trigger>Generate preview</button>
-                                    <div class="card-status" data-preview-status>Idle until requested.</div>
+                                    <button class="preview-trigger" type="button" data-preview-trigger>Requeue preview</button>
+                                    <div class="card-status" data-preview-status>Queued automatically on page load.</div>
                                 </div>
                             </div>
                             <div class="card-body">
@@ -550,7 +550,7 @@
                                 <code class="query-code">{{.Query}}</code>
                                 <div class="card-actions">
                                     <a class="card-link" href="{{.ImageURL}}" target="_blank" rel="noreferrer">Open raw image</a>
-                                    <button class="preview-trigger preview-trigger-secondary" type="button" data-preview-trigger>Generate preview</button>
+                                    <button class="preview-trigger preview-trigger-secondary" type="button" data-preview-trigger>Requeue preview</button>
                                 </div>
                             </div>
                         </article>
@@ -562,7 +562,7 @@
         </section>
 
         <div class="footer-note">
-            The page still uses direct query-string variations, so every tile stays inspectable and shareable, but previews are now intentionally queued instead of auto-loaded. If you want a fresh render for a tile, remove the cached image from <code>data/images</code> or change the query.
+            The page still uses direct query-string variations, so every tile stays inspectable and shareable, and the full contact sheet now begins loading automatically when you open it. If you want a fresh render for a tile, remove the cached image from <code>data/images</code> or change the query.
         </div>
     </main>
     <script>
@@ -684,6 +684,8 @@
                     rowButton.closest('.row').querySelectorAll('.card').forEach(enqueueCard);
                 }
             });
+
+            document.querySelectorAll('.card').forEach(enqueueCard);
         })();
     </script>
 </body>

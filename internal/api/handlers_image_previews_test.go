@@ -28,12 +28,12 @@ func TestWeatherImagePreviewsPage(t *testing.T) {
 		t.Fatal("expected weather image previews title")
 	}
 	if !strings.Contains(body, "data-image-url=\"/weather-image?weather=clear_warm_day\"") {
-		t.Fatal("expected clear warm daytime preview to be deferred")
+		t.Fatal("expected clear warm daytime preview url")
 	}
 	if !strings.Contains(body, "data-image-url=\"/weather-image?weather=storm_night&amp;smoke=dense_smoke\"") {
-		t.Fatal("expected smoke-aware storm night preview to be deferred")
+		t.Fatal("expected smoke-aware storm night preview url")
 	}
-	if !strings.Contains(body, "Generate preview") {
-		t.Fatal("expected generate preview action")
+	if !strings.Contains(body, "all previews start queueing when the page opens") {
+		t.Fatal("expected auto-load queue copy")
 	}
 }
