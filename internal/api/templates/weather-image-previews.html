@@ -443,7 +443,7 @@
                     <div class="eyebrow">Weather Image Field Guide</div>
                     <h1>Preview every banner scene directly from the live endpoint.</h1>
                     <p class="hero-copy">
-                        Each tile below points at <code>/weather-image</code> with explicit query overrides, and all previews start queueing when the page opens. The page still runs one request at a time so the full sheet fills in automatically without flooding the generator with dozens of simultaneous requests.
+                        Each tile below points at <code>/weather-image</code> with explicit query overrides, and all previews start queueing when the page opens. The page runs up to five requests at a time so the full sheet fills in faster without flooding the generator with dozens of simultaneous requests.
                     </p>
                     <nav class="jump-links">
                         <a href="#weather-matrix">Weather + light matrix</a>
@@ -569,7 +569,7 @@
         (function() {
             var queue = [];
             var activeLoads = 0;
-            var maxConcurrentLoads = 1;
+            var maxConcurrentLoads = 5;
 
             function updateButtons(card, label, disabled) {
                 card.querySelectorAll('[data-preview-trigger]').forEach(function(button) {
@@ -628,7 +628,7 @@
                 }
 
                 activeLoads += 1;
-                setCardState(card, 'loading', 'Generating this scene now. Keep this tab open while the queue advances.');
+                setCardState(card, 'loading', 'Generating this scene now. Keep this tab open while up to five previews run in parallel.');
 
                 preview.onload = function() {
                     preview.hidden = false;
@@ -665,7 +665,7 @@
                     return;
                 }
 
-                setCardState(card, 'queued', 'Queued. This page renders one preview request at a time.');
+                setCardState(card, 'queued', 'Queued. This page renders up to five preview requests at a time.');
                 queue.push(card);
                 processQueue();
             }
