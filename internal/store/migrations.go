@@ -489,6 +489,17 @@ SET obs_type = 'instant'
 WHERE obs_type = 'unknown';
 `,
 	},
+	{
+		Version:     24,
+		Description: "Store richer BOM forecast fields for daily API shadow ingest",
+		SQL: `
+ALTER TABLE forecasts ADD COLUMN precip_min REAL;
+ALTER TABLE forecasts ADD COLUMN precip_max REAL;
+ALTER TABLE forecasts ADD COLUMN precip_units TEXT;
+ALTER TABLE forecasts ADD COLUMN narrative_short TEXT;
+ALTER TABLE forecasts ADD COLUMN narrative_extended TEXT;
+`,
+	},
 }
 
 func (s *Store) Migrate() error {

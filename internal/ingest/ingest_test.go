@@ -573,6 +573,7 @@ func TestParsePrecipRange(t *testing.T) {
 		{"0 to 20 mm", 20, true},
 		{"1 to 5 mm", 5, true},
 		{"0.5 to 2.5 mm", 2.5, true},
+		{"0 mm", 0, true},
 		{"5 mm", 5, true},
 		{"", 0, false},
 		{"unknown", 0, false},
