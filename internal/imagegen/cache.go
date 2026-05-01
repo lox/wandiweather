@@ -9,6 +9,16 @@ import (
 	"github.com/lox/wandiweather/internal/forecast"
 )
 
+// ModelCacheDir returns the model-specific cache directory. Changing models
+// automatically cold-starts the cache so newly generated images don't reuse
+// older renders created by a different model.
+func ModelCacheDir(baseDir, model string) string {
+	if model == "" {
+		model = DefaultModel
+	}
+	return filepath.Join(baseDir, model)
+}
+
 // Cache provides file-based caching for generated weather images.
 type Cache struct {
 	dir      string

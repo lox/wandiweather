@@ -44,13 +44,17 @@ func NewServer(store *store.Store, port string, loc *time.Location) *Server {
 
 	// Initialize VicEmergency client for Wandiligong area
 	emergencyClient := emergency.NewClient(-36.794, 146.977, emergency.DefaultRadiusKM)
+	imageCacheDir := imagegen.ModelCacheDir("data/images", imagegen.DefaultModel)
+	if imageGen != nil {
+		imageCacheDir = imagegen.ModelCacheDir("data/images", imageGen.Model())
+	}
 
 	return &Server{
 		store:           store,
 		port:            port,
 		loc:             loc,
 		tmpl:            tmpl,
-		imageCache:      imagegen.NewCache("data/images"),
+		imageCache:      imagegen.NewCache(imageCacheDir),
 		imageGen:        imageGen,
 		emergencyClient: emergencyClient,
 		ogImageCache:    imagegen.NewOGImageCache(5 * time.Minute),

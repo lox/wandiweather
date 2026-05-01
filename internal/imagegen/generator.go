@@ -20,6 +20,9 @@ type Generator struct {
 	model  string
 }
 
+// DefaultModel is the GPT Image model used for weather banner generation.
+const DefaultModel = "gpt-image-2"
+
 // NewGenerator creates a new image generator.
 // It reads the OPENAI_API_KEY environment variable for authentication.
 func NewGenerator() (*Generator, error) {
@@ -34,8 +37,16 @@ func NewGenerator() (*Generator, error) {
 
 	return &Generator{
 		client: client,
-		model:  "gpt-image-2", // Newer image model for higher-quality generations
+		model:  DefaultModel, // Newer image model for higher-quality generations
 	}, nil
+}
+
+// Model returns the configured OpenAI image model name.
+func (g *Generator) Model() string {
+	if g == nil || g.model == "" {
+		return DefaultModel
+	}
+	return g.model
 }
 
 // Generate creates an image for the given weather condition, time of day, and smoke level.
