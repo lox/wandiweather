@@ -84,6 +84,56 @@ func TestCurrentAirQualityParsesWH41Response(t *testing.T) {
 	}
 }
 
+func TestCurrentAirQuality_AllowsPM25WithoutAQI(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{
+			"code": 0,
+			"msg": "ok",
+			"data": {
+				"pm25_ch1": {
+					"pm25": {"time": "1712476800", "unit": "ug/m3", "value": "9.4"},
+					"pm25_avg_24h": {"time": "1712476800", "unit": "ug/m3", "value": "11.2"}
+				}
+			}
+		}`)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		appKey:   "app-key",
+		apiKey:   "api-key",
+		mac:      "AA:BB:CC:DD:EE:FF",
+		baseURL:  server.URL,
+		client:   server.Client(),
+		cacheTTL: time.Minute,
+	}
+
+	reading, err := client.CurrentAirQuality()
+	if err != nil {
+		t.Fatalf("CurrentAirQuality: %v", err)
+	}
+	if reading == nil {
+		t.Fatal("CurrentAirQuality returned nil")
+	}
+	if reading.PM25 != 9.4 {
+		t.Fatalf("PM25 = %.1f, want 9.4", reading.PM25)
+	}
+	if reading.HasRealTimeAQI {
+		t.Fatal("expected HasRealTimeAQI to be false")
+	}
+	if reading.RealTimeAQI != 0 {
+		t.Fatalf("RealTimeAQI = %d, want 0", reading.RealTimeAQI)
+	}
+	if !reading.HasPM25Avg24H || reading.PM25Avg24H != 11.2 {
+		t.Fatalf("PM25Avg24H = %.1f (valid=%t), want 11.2 true", reading.PM25Avg24H, reading.HasPM25Avg24H)
+	}
+	if reading.Category != "" || reading.CategoryClass != "" {
+		t.Fatalf("unexpected AQI classification %q/%q", reading.Category, reading.CategoryClass)
+	}
+}
+
 func TestCurrentAirQualityUsesCache(t *testing.T) {
 	t.Parallel()
 
@@ -133,8 +183,8 @@ func TestFetchAirQualityHistoryParsesWH41Response(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("call_back"); got != "pm25_ch1" {
-			t.Fatalf("call_back = %q, want pm25_ch1", got)
+		if got := r.URL.Query().Get("call_back"); got != historyAirQualityCallbacks {
+			t.Fatalf("call_back = %q, want %q", got, historyAirQualityCallbacks)
 		}
 		if got := r.URL.Query().Get("cycle_type"); got != HistoryCycle5Min {
 			t.Fatalf("cycle_type = %q, want %q", got, HistoryCycle5Min)
@@ -144,7 +194,7 @@ func TestFetchAirQualityHistoryParsesWH41Response(t *testing.T) {
 			"code": 0,
 			"msg": "success",
 			"data": {
-				"pm25_ch1": {
+				"pm25_ch2": {
 					"pm25": {
 						"unit": "ug/m3",
 						"list": {
@@ -194,8 +244,8 @@ func TestFetchAirQualityHistoryParsesWH41Response(t *testing.T) {
 	if readings[0].HasRealTimeAQI {
 		t.Fatal("expected historical reading to omit real-time AQI")
 	}
-	if readings[0].SourceFieldKey != "pm25_ch1" {
-		t.Fatalf("SourceFieldKey = %q, want pm25_ch1", readings[0].SourceFieldKey)
+	if readings[0].SourceFieldKey != "pm25_ch2" {
+		t.Fatalf("SourceFieldKey = %q, want pm25_ch2", readings[0].SourceFieldKey)
 	}
 	if got := readings[1].ObservedAt.UTC(); !got.Equal(start.Add(5 * time.Minute)) {
 		t.Fatalf("second ObservedAt = %v, want %v", got, start.Add(5*time.Minute))

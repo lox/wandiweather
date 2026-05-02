@@ -16,6 +16,7 @@ import (
 )
 
 const defaultBaseURL = "https://api.ecowitt.net/api/v3/device"
+const historyAirQualityCallbacks = "pm25_ch1,pm25_ch2,pm25_ch3,pm25_ch4"
 
 // HistoryCycleAuto lets Ecowitt choose the history resolution.
 const HistoryCycleAuto = "auto"
@@ -200,7 +201,7 @@ func (c *Client) FetchAirQualityHistory(start, end time.Time, cycleType string) 
 	params.Set("mac", c.mac)
 	params.Set("start_date", start.UTC().Format("2006-01-02 15:04:05"))
 	params.Set("end_date", end.UTC().Format("2006-01-02 15:04:05"))
-	params.Set("call_back", "pm25_ch1")
+	params.Set("call_back", historyAirQualityCallbacks)
 	params.Set("cycle_type", cycleType)
 
 	body, result, _, err := c.doAPIRequest("/history", params)
@@ -339,17 +340,10 @@ func extractAirQualityReading(data map[string]airQualityBlock) (*AirQualityReadi
 	if block.PM25 == nil {
 		return nil, fmt.Errorf("ecowitt PM2.5 data missing pm25 field")
 	}
-	if block.RealTimeAQI == nil {
-		return nil, fmt.Errorf("ecowitt PM2.5 data missing real_time_aqi field")
-	}
 
 	pm25, err := parseFloat(block.PM25.Value)
 	if err != nil {
 		return nil, fmt.Errorf("parse pm25: %w", err)
-	}
-	aqiValue, err := parseFloat(block.RealTimeAQI.Value)
-	if err != nil {
-		return nil, fmt.Errorf("parse real_time_aqi: %w", err)
 	}
 	observedAt, err := parseUnixTime(block.PM25.Time)
 	if err != nil {
@@ -359,9 +353,17 @@ func extractAirQualityReading(data map[string]airQualityBlock) (*AirQualityReadi
 	reading := &AirQualityReading{
 		ObservedAt:     observedAt,
 		PM25:           pm25,
-		RealTimeAQI:    int(aqiValue + 0.5),
-		HasRealTimeAQI: true,
 		SourceFieldKey: keys[0],
+	}
+
+	if block.RealTimeAQI != nil {
+		aqiValue, err := parseFloat(block.RealTimeAQI.Value)
+		if err != nil {
+			return nil, fmt.Errorf("parse real_time_aqi: %w", err)
+		}
+		reading.RealTimeAQI = int(aqiValue + 0.5)
+		reading.HasRealTimeAQI = true
+		reading.Category, reading.CategoryClass = ClassifyAQI(reading.RealTimeAQI)
 	}
 
 	if block.AQI24H != nil {
@@ -382,7 +384,6 @@ func extractAirQualityReading(data map[string]airQualityBlock) (*AirQualityReadi
 		reading.HasPM25Avg24H = true
 	}
 
-	reading.Category, reading.CategoryClass = ClassifyAQI(reading.RealTimeAQI)
 	return reading, nil
 }
 
