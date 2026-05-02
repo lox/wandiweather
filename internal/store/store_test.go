@@ -29,6 +29,39 @@ func setupTestStore(t *testing.T) *Store {
 	return store
 }
 
+func applyMigrationForTest(t *testing.T, store *Store, m migration, description string) {
+	t.Helper()
+
+	tx, err := store.db.Begin()
+	if err != nil {
+		t.Fatalf("begin tx for migration %d: %v", m.Version, err)
+	}
+
+	if m.Apply != nil {
+		if err := m.Apply(tx); err != nil {
+			tx.Rollback()
+			t.Fatalf("apply migration %d: %v", m.Version, err)
+		}
+	} else {
+		if _, err := tx.Exec(m.SQL); err != nil {
+			tx.Rollback()
+			t.Fatalf("exec migration %d: %v", m.Version, err)
+		}
+	}
+
+	if _, err := tx.Exec(
+		"INSERT INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)",
+		m.Version, description, time.Now().UTC(),
+	); err != nil {
+		tx.Rollback()
+		t.Fatalf("record migration %d: %v", m.Version, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit migration %d: %v", m.Version, err)
+	}
+}
+
 func TestUpsertAndGetStation(t *testing.T) {
 	store := setupTestStore(t)
 
@@ -295,6 +328,66 @@ func TestGetCleanObservations(t *testing.T) {
 	}
 	if cleanObs[0].Temp.Float64 != 25.0 {
 		t.Errorf("cleanObs[0].Temp = %v, want 25.0", cleanObs[0].Temp.Float64)
+	}
+}
+
+func TestMigrate_FixesForecastSchemaWhenVersion24WasAlreadyUsed(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	loc, err := time.LoadLocation("Australia/Melbourne")
+	if err != nil {
+		t.Fatalf("load timezone: %v", err)
+	}
+	store := New(db, loc)
+
+	if err := store.ensureMigrationsTable(); err != nil {
+		t.Fatalf("ensure migrations table: %v", err)
+	}
+
+	for _, m := range migrations {
+		if m.Version > 23 {
+			break
+		}
+		applyMigrationForTest(t, store, m, m.Description)
+	}
+
+	applyMigrationForTest(t, store, migration{Version: 24}, "Add Ecowitt air quality readings table")
+
+	if err := store.Migrate(); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	fetchedAt := time.Now().UTC().Truncate(time.Second)
+	validDate := fetchedAt.Add(24 * time.Hour).Truncate(24 * time.Hour)
+
+	fc := models.Forecast{
+		Source:            "bom_daily_api",
+		FetchedAt:         fetchedAt,
+		ValidDate:         validDate,
+		DayOfForecast:     1,
+		TempMax:           sql.NullFloat64{Float64: 27, Valid: true},
+		TempMin:           sql.NullFloat64{Float64: 14, Valid: true},
+		PrecipMin:         sql.NullFloat64{Float64: 1, Valid: true},
+		PrecipMax:         sql.NullFloat64{Float64: 5, Valid: true},
+		PrecipUnits:       sql.NullString{String: "mm", Valid: true},
+		NarrativeShort:    sql.NullString{String: "Showers.", Valid: true},
+		NarrativeExtended: sql.NullString{String: "Showers developing later.", Valid: true},
+	}
+
+	if err := store.InsertForecast(fc); err != nil {
+		t.Fatalf("InsertForecast after migration repair: %v", err)
+	}
+
+	var description string
+	if err := store.db.QueryRow("SELECT description FROM schema_migrations WHERE version = 25").Scan(&description); err != nil {
+		t.Fatalf("load migration 25: %v", err)
+	}
+	if description == "" {
+		t.Fatal("migration 25 description should not be empty")
 	}
 }
 
