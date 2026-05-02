@@ -47,6 +47,16 @@
     {{end}}
 </div>
 
+{{if .AirQuality}}
+<div class="air-quality{{if .AirQuality.CategoryClass}} air-quality-{{.AirQuality.CategoryClass}}{{end}}">
+    <span class="air-quality-badge">{{if .AirQuality.HasRealTimeAQI}}Air {{.AirQuality.Category}}{{else}}Air quality{{end}}</span>
+    {{if .AirQuality.HasRealTimeAQI}}<span>AQI {{.AirQuality.RealTimeAQI}}</span>{{end}}
+    <span>PM2.5 {{printf "%.1f" .AirQuality.PM25}} ug/m3</span>
+    {{if .AirQuality.HasAQI24H}}<span>24h AQI {{printf "%.0f" .AirQuality.AQI24H}}</span>{{end}}
+    {{if .AirQuality.HasPM25Avg24H}}<span>24h {{printf "%.1f" .AirQuality.PM25Avg24H}} ug/m3</span>{{end}}
+</div>
+{{end}}
+
 <!-- TODAY: Forecast -->
 {{if .TodayForecast}}
 <div class="today-forecast">
@@ -130,7 +140,7 @@
 
 <div class="toggles">
     {{if .RainHistory}}<a onclick="toggleRainHistory()">Show rainfall history</a>{{end}}
-    <a onclick="toggleChart()">Show 24hr chart</a>
+    <a onclick="toggleChart()">Show 24hr charts</a>
     <a onclick="toggleStations()">Show all stations</a>
 </div>
 

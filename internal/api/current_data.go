@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/lox/wandiweather/internal/ecowitt"
 	"github.com/lox/wandiweather/internal/forecast"
 	"github.com/lox/wandiweather/internal/models"
 )
@@ -17,6 +18,40 @@ func observationIsStale(obs *models.Observation, now time.Time) bool {
 		return true
 	}
 	return now.Sub(obs.ObservedAt) > staleObservationThreshold
+}
+
+func airQualityIsStale(reading *ecowitt.AirQualityReading, now time.Time) bool {
+	if reading == nil {
+		return true
+	}
+	return now.Sub(reading.ObservedAt) > staleObservationThreshold
+}
+
+// currentAirQuality resolves the freshest air-quality reading available to the
+// dashboard and hero image, preferring live data only when it is fresh and more
+// useful than the stored fallback.
+func (s *Server) currentAirQuality(now time.Time) *ecowitt.AirQualityReading {
+	var best *ecowitt.AirQualityReading
+
+	if reading, err := s.store.GetLatestAirQualityReading(); err != nil {
+		log.Printf("get stored air quality: %v", err)
+	} else if !airQualityIsStale(reading, now) {
+		best = reading
+	}
+
+	if s.airQuality == nil {
+		return best
+	}
+
+	reading, err := s.airQuality.CurrentAirQuality()
+	if err != nil {
+		log.Printf("get current air quality: %v", err)
+	}
+	if !airQualityIsStale(reading, now) && (best == nil || reading.ObservedAt.After(best.ObservedAt) || (reading.ObservedAt.Equal(best.ObservedAt) && airQualityDetailScore(reading) > airQualityDetailScore(best))) {
+		best = reading
+	}
+
+	return best
 }
 
 // getCurrentData aggregates all current weather data for display.
@@ -165,6 +200,8 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 			}
 		}
 	}
+
+	data.AirQuality = s.currentAirQuality(now)
 
 	forecasts, err := s.store.GetLatestForecasts()
 	if err == nil {
@@ -322,6 +359,24 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 	}
 
 	return data, nil
+}
+
+func airQualityDetailScore(reading *ecowitt.AirQualityReading) int {
+	if reading == nil {
+		return 0
+	}
+
+	score := 0
+	if reading.HasRealTimeAQI {
+		score++
+	}
+	if reading.HasAQI24H {
+		score++
+	}
+	if reading.HasPM25Avg24H {
+		score++
+	}
+	return score
 }
 
 // moonEmoji returns the appropriate moon phase emoji.
