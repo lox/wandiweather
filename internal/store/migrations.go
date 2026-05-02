@@ -11,6 +11,7 @@ type migration struct {
 	Version     int
 	Description string
 	SQL         string
+	Apply       func(*sql.Tx) error
 }
 
 var migrations = []migration{
@@ -500,6 +501,58 @@ ALTER TABLE forecasts ADD COLUMN narrative_short TEXT;
 ALTER TABLE forecasts ADD COLUMN narrative_extended TEXT;
 `,
 	},
+	{
+		Version:     25,
+		Description: "Ensure BOM daily API forecast columns exist after version conflict",
+		Apply:       ensureBOMDailyAPIForecastColumns,
+	},
+}
+
+func ensureBOMDailyAPIForecastColumns(tx *sql.Tx) error {
+	rows, err := tx.Query("PRAGMA table_info(forecasts)")
+	if err != nil {
+		return fmt.Errorf("forecast table info: %w", err)
+	}
+	defer rows.Close()
+
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name string
+		var dataType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &pk); err != nil {
+			return fmt.Errorf("scan forecast column: %w", err)
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate forecast columns: %w", err)
+	}
+
+	columns := []struct {
+		name       string
+		definition string
+	}{
+		{name: "precip_min", definition: "REAL"},
+		{name: "precip_max", definition: "REAL"},
+		{name: "precip_units", definition: "TEXT"},
+		{name: "narrative_short", definition: "TEXT"},
+		{name: "narrative_extended", definition: "TEXT"},
+	}
+
+	for _, column := range columns {
+		if existing[column.name] {
+			continue
+		}
+		if _, err := tx.Exec(fmt.Sprintf("ALTER TABLE forecasts ADD COLUMN %s %s", column.name, column.definition)); err != nil {
+			return fmt.Errorf("add forecasts.%s: %w", column.name, err)
+		}
+	}
+
+	return nil
 }
 
 func (s *Store) Migrate() error {
@@ -524,7 +577,12 @@ func (s *Store) Migrate() error {
 			return fmt.Errorf("begin tx for migration %d: %w", m.Version, err)
 		}
 
-		if _, err := tx.Exec(m.SQL); err != nil {
+		if m.Apply != nil {
+			if err := m.Apply(tx); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("execute migration %d: %w", m.Version, err)
+			}
+		} else if _, err := tx.Exec(m.SQL); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("execute migration %d: %w", m.Version, err)
 		}
