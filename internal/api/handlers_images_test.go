@@ -2,12 +2,14 @@ package api
 
 import (
 	"database/sql"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/lox/wandiweather/internal/ecowitt"
 	"github.com/lox/wandiweather/internal/forecast"
+	"github.com/lox/wandiweather/internal/imagegen"
 	"github.com/lox/wandiweather/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -189,5 +191,25 @@ func TestParseSmokeOverride(t *testing.T) {
 				t.Fatalf("parseSmokeOverride() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestWeatherImage_SmokeOverrideBypassesGenericCacheFallback(t *testing.T) {
+	srv := setupImageTestServer(t, nil)
+	srv.imageCache = imagegen.NewCache(t.TempDir())
+	if err := srv.imageCache.Set(forecast.ConditionWithTimeAndSmoke(forecast.ConditionClearCool, forecast.TimeDay, forecast.SmokeClear), []byte("generic-cache")); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/weather-image?smoke=dense_smoke", nil)
+	w := httptest.NewRecorder()
+
+	srv.handleWeatherImage(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
+	}
+	if body := w.Body.String(); body == "generic-cache" {
+		t.Fatalf("expected smoke override to skip generic cached image fallback")
 	}
 }

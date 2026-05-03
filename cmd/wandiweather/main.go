@@ -30,7 +30,7 @@ var cli struct {
 	AirQualityBackfillDays int    `name:"air-quality-backfill-days" default:"0" help:"Backfill Ecowitt air quality history for the last N days and exit (max 90)."`
 	Daily                  bool   `name:"daily" help:"Run daily jobs (summaries + verification) and exit."`
 	BackfillDaily          bool   `name:"backfill-daily" help:"Backfill all daily summaries and verification."`
-	PWSApiKey              string `name:"pws-api-key" env:"PWS_API_KEY" required:"" help:"Weather Underground API key."`
+	PWSApiKey              string `name:"pws-api-key" env:"PWS_API_KEY" help:"Weather Underground API key."`
 	EcowittAPIKey          string `name:"ecowitt-api-key" env:"ECOWITT_API_KEY" help:"Ecowitt cloud API key."`
 	EcowittAppKey          string `name:"ecowitt-app-key" env:"ECOWITT_APP_KEY" help:"Ecowitt cloud application key."`
 	EcowittMAC             string `name:"ecowitt-mac" env:"ECOWITT_MAC" help:"Ecowitt device MAC address."`
@@ -61,11 +61,31 @@ func init() {
 	_ = godotenv.Load() // Load .env if present, ignore error if missing
 }
 
+func modeRequiresPWSKey(noPoll, once, backfill bool, airQualityBackfillDays int, daily, backfillDaily bool) bool {
+	if backfill {
+		return true
+	}
+	if airQualityBackfillDays > 0 || backfillDaily || daily {
+		return false
+	}
+	if once {
+		return true
+	}
+	if noPoll {
+		return false
+	}
+	return true
+}
+
 func main() {
 	kong.Parse(&cli,
 		kong.Name("wandiweather"),
 		kong.Description("Weather station data ingestion and display server."),
 	)
+
+	if modeRequiresPWSKey(cli.NoPoll, cli.Once, cli.Backfill, cli.AirQualityBackfillDays, cli.Daily, cli.BackfillDaily) && cli.PWSApiKey == "" {
+		log.Fatal("missing Weather Underground API key")
+	}
 
 	db, err := sql.Open("sqlite", cli.DB)
 	if err != nil {

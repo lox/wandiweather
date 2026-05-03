@@ -37,6 +37,7 @@ func (s *Server) handleWeatherImage(w http.ResponseWriter, r *http.Request) {
 	}
 	if override := r.URL.Query().Get("smoke"); override != "" {
 		if parsed, ok := parseSmokeOverride(override); ok {
+			hasOverride = true
 			smoke = parsed
 		}
 	}
