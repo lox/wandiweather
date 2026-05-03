@@ -62,10 +62,16 @@ func init() {
 }
 
 func modeRequiresPWSKey(noPoll, once, backfill bool, airQualityBackfillDays int, daily, backfillDaily bool) bool {
-	if once || backfill {
+	if backfill {
 		return true
 	}
-	if airQualityBackfillDays > 0 || daily || backfillDaily || noPoll {
+	if airQualityBackfillDays > 0 || backfillDaily || daily {
+		return false
+	}
+	if once {
+		return true
+	}
+	if noPoll {
 		return false
 	}
 	return true
