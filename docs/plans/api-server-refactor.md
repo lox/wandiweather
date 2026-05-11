@@ -220,7 +220,7 @@ type Renderer interface {
 ### Phase 1 Complete When:
 - [x] `server.go` is under 300 lines (135 lines ✅)
 - [x] Each new file has a clear single responsibility
-- [x] `task check` passes
+- [x] `mise run check` passes
 - [x] No functional changes (same behavior)
 
 ### Phase 2 Complete When:

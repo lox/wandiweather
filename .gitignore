@@ -1,3 +1,4 @@
 data/
-.hermit/
+.mise.local.toml
+mise.local.toml
 /wandiweather
