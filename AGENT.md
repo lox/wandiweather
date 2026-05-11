@@ -2,18 +2,18 @@
 
 ## Commands
 
-Uses [Task](https://taskfile.dev) (installed via Hermit):
+Uses [mise](https://mise.jdx.dev/) for toolchain and task management:
 
 ```bash
-task dev       # Run local dev server with hot reload (no API polling)
-task run       # Run server with polling enabled
-task build     # Build the binary
-task test      # Run all tests
-task lint      # Run linter (go vet + staticcheck)
-task check     # Run build, test, and lint
-task once      # Run single ingestion and exit
-task daily     # Run daily jobs manually
-task pull-db   # Pull production database from Fly.io
+mise run dev       # Run local dev server with hot reload (no API polling)
+mise run run       # Run server with polling enabled
+mise run build     # Build the binary
+mise run test      # Run all tests
+mise run lint      # Run linter (go vet + staticcheck)
+mise run check     # Run build, test, and lint
+mise run once      # Run single ingestion and exit
+mise run daily     # Run daily jobs manually
+mise run pull-db   # Pull production database from Fly.io
 ```
 
 ## Production Commands
@@ -32,7 +32,7 @@ fly ssh console -C "/app/wandiweather --db /data/wandiweather.db --backfill-dail
 fly ssh console -C "/app/wandiweather --db /data/wandiweather.db --daily"
 ```
 
-**Note:** The prod container does not have `sqlite3` installed. Use `task pull-db` to pull the production database locally for queries.
+**Note:** The prod container does not have `sqlite3` installed. Use `mise run pull-db` to pull the production database locally for queries.
 
 ## Project Structure
 

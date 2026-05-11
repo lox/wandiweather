@@ -1,0 +1,54 @@
+[tools]
+go = "1.25.5"
+golangci-lint = "2.7.2"
+
+[tasks.dev]
+description = "Run local development server with hot reload (no API polling)"
+run = "go run github.com/makiuchi-d/arelo@latest -p '**/*.go' -p '**/*.html' -i '**/.*' -i '**/*_test.go' -- go run ./cmd/wandiweather --db data/wandiweather.db --no-poll"
+
+[tasks.run]
+description = "Run server with polling enabled"
+run = "go run ./cmd/wandiweather --db data/wandiweather.db"
+
+[tasks.build]
+description = "Build the binary"
+run = "go build -o wandiweather ./cmd/wandiweather"
+
+[tasks.test]
+description = "Run all tests"
+run = "go test ./..."
+
+[tasks.lint]
+description = "Run linter"
+run = [
+  "go vet ./...",
+  "go run honnef.co/go/tools/cmd/staticcheck@latest ./...",
+]
+
+[tasks.check]
+description = "Run build, test, and lint"
+run = [
+  { task = "build" },
+  { task = "test" },
+  { task = "lint" },
+]
+
+[tasks.once]
+description = "Run single ingestion and exit"
+run = "go run ./cmd/wandiweather --db data/wandiweather.db --once"
+
+[tasks.daily]
+description = "Run daily jobs manually"
+run = "go run ./cmd/wandiweather --db data/wandiweather.db --daily"
+
+[tasks.pull-db]
+description = "Pull production database from Fly.io"
+run = [
+  "rm -f data/wandiweather.db data/wandiweather.db-shm data/wandiweather.db-wal",
+  "fly sftp get /data/wandiweather.db data/wandiweather.db -a wandiweather",
+  "fly sftp get /data/wandiweather.db-wal data/wandiweather.db-wal -a wandiweather || true",
+]
+
+[tasks.deploy]
+description = "Deploy to Fly.io"
+run = "fly deploy -a wandiweather"

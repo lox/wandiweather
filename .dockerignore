@@ -1,4 +1,6 @@
 data/
+.mise.local.toml
+mise.local.toml
 /wandiweather
 fly.toml
 .git/

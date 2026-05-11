@@ -15,34 +15,37 @@ Hyperlocal weather service for Wandiligong/Bright, Victoria. Aggregates data fro
 
 ## Quick Start
 
-Requires [Hermit](https://cashapp.github.io/hermit/) for toolchain management.
+Requires [mise](https://mise.jdx.dev/) for toolchain and task management.
 
 ```bash
-# Activate hermit environment
-source bin/activate-hermit
+# Install the pinned toolchain
+mise trust
+mise install
 
 # Set your Weather Underground API key
 export PWS_API_KEY=your_key_here
 
 # Run local dev server with hot reload
-task dev
+mise run dev
 ```
 
 Visit http://localhost:8080
 
 ## Tasks
 
-Uses [Task](https://taskfile.dev) (installed via Hermit):
+Tasks are defined in `mise.toml`:
 
 | Command | Description |
 |---------|-------------|
-| `task dev` | Run local dev server with hot reload (no API polling) |
-| `task run` | Run server with polling enabled |
-| `task build` | Build the binary |
-| `task test` | Run all tests |
-| `task once` | Run single ingestion and exit |
-| `task daily` | Run daily jobs manually |
-| `task pull-db` | Pull production database from Fly.io |
+| `mise run dev` | Run local dev server with hot reload (no API polling) |
+| `mise run run` | Run server with polling enabled |
+| `mise run build` | Build the binary |
+| `mise run test` | Run all tests |
+| `mise run lint` | Run linter |
+| `mise run check` | Run build, test, and lint |
+| `mise run once` | Run single ingestion and exit |
+| `mise run daily` | Run daily jobs manually |
+| `mise run pull-db` | Pull production database from Fly.io |
 
 ## CLI Flags
 
@@ -71,8 +74,8 @@ docs/plans/           # Implementation plans
 
 ## Deployment
 
-Deployed on Fly.io. The Dockerfile uses Hermit for Go toolchain management.
+Deployed on Fly.io. The Dockerfile uses mise for Go toolchain management.
 
 ```bash
-fly deploy
+mise run deploy
 ```
