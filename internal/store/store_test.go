@@ -502,6 +502,46 @@ func TestInsertAndGetForecast_PreservesDailyAPIRichFields(t *testing.T) {
 	}
 }
 
+func TestGetLastForecastPrecipRangeUsesRequestedSource(t *testing.T) {
+	store := setupTestStore(t)
+
+	fetchedAt := time.Now().UTC().Truncate(time.Second)
+	validDate := time.Now().UTC().Truncate(24 * time.Hour)
+
+	if err := store.InsertForecast(models.Forecast{
+		Source:      "bom",
+		FetchedAt:   fetchedAt,
+		ValidDate:   validDate,
+		PrecipRange: sql.NullString{String: "0 to 1 mm", Valid: true},
+	}); err != nil {
+		t.Fatalf("InsertForecast BOM: %v", err)
+	}
+	if err := store.InsertForecast(models.Forecast{
+		Source:      "bom_daily_api",
+		FetchedAt:   fetchedAt,
+		ValidDate:   validDate,
+		PrecipRange: sql.NullString{String: "3 to 8 mm", Valid: true},
+	}); err != nil {
+		t.Fatalf("InsertForecast bom_daily_api: %v", err)
+	}
+
+	got, err := store.GetLastForecastPrecipRange("bom_daily_api", validDate)
+	if err != nil {
+		t.Fatalf("GetLastForecastPrecipRange daily API: %v", err)
+	}
+	if got != "3 to 8 mm" {
+		t.Fatalf("daily API range = %q, want 3 to 8 mm", got)
+	}
+
+	got, err = store.GetLastForecastPrecipRange("bom", validDate)
+	if err != nil {
+		t.Fatalf("GetLastForecastPrecipRange legacy BOM: %v", err)
+	}
+	if got != "0 to 1 mm" {
+		t.Fatalf("legacy BOM range = %q, want 0 to 1 mm", got)
+	}
+}
+
 func TestIngestRun_StartAndComplete(t *testing.T) {
 	store := setupTestStore(t)
 

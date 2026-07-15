@@ -1,12 +1,34 @@
 package ingest
 
 import (
+	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestBOMDailyAPIHTTPClientForcesIPv4(t *testing.T) {
+	var gotNetwork string
+	client := newBOMDailyAPIHTTPClient(func(_ context.Context, network, _ string) (net.Conn, error) {
+		gotNetwork = network
+		return nil, errors.New("stop before dialing")
+	})
+
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("client.Transport = %T, want *http.Transport", client.Transport)
+	}
+
+	_, _ = transport.DialContext(context.Background(), "tcp", "api.weather.bom.gov.au:443")
+
+	if gotNetwork != "tcp4" {
+		t.Fatalf("dial network = %q, want tcp4", gotNetwork)
+	}
+}
 
 func TestBOMDailyAPIClientFetchForecasts_UsesWangarattaDailyAPI(t *testing.T) {
 	requestedPath := make(chan string, 1)

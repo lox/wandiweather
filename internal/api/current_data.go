@@ -229,7 +229,7 @@ func (s *Server) getCurrentData() (*CurrentData, error) {
 				break
 			}
 		}
-		for _, fc := range forecasts["bom"] {
+		for _, fc := range liveBOMForecasts(forecasts) {
 			if fc.ValidDate.Format("2006-01-02") == todayStr && (fc.TempMax.Valid || fc.TempMin.Valid) {
 				f := fc
 				bomForecast = &f

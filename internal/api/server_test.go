@@ -205,6 +205,205 @@ func TestAPICurrent_IgnoresStaleAuxiliaryObservations(t *testing.T) {
 	}
 }
 
+func TestAPICurrent_UsesDailyAPIBOMForecastForLiveRead(t *testing.T) {
+	t.Parallel()
+
+	s, loc := setupTestStore(t)
+	if err := s.UpsertStation(models.Station{StationID: "PRIMARY", Name: "Primary", ElevationTier: "valley_floor", IsPrimary: true, Active: true}); err != nil {
+		t.Fatalf("upsert primary station: %v", err)
+	}
+	insertObservation(t, s, "PRIMARY", time.Now().UTC().Add(-5*time.Minute), 15)
+
+	now := time.Now().UTC()
+	validDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	fetchedAt := now.Add(-10 * time.Minute).Truncate(time.Second)
+	insertForecastForLiveBOMTest(t, s, models.Forecast{
+		Source:        "wu",
+		FetchedAt:     fetchedAt,
+		ValidDate:     validDate,
+		DayOfForecast: 0,
+		TempMax:       sql.NullFloat64{Float64: 27, Valid: true},
+		TempMin:       sql.NullFloat64{Float64: 11, Valid: true},
+		PrecipChance:  sql.NullInt64{Int64: 70, Valid: true},
+		PrecipAmount:  sql.NullFloat64{Float64: 2, Valid: true},
+		Narrative:     sql.NullString{String: "Partly cloudy.", Valid: true},
+	})
+	insertForecastForLiveBOMTest(t, s, models.Forecast{
+		Source:        "bom",
+		FetchedAt:     fetchedAt,
+		ValidDate:     validDate,
+		DayOfForecast: 0,
+		TempMax:       sql.NullFloat64{Float64: 22, Valid: true},
+		TempMin:       sql.NullFloat64{Float64: 8, Valid: true},
+		PrecipRange:   sql.NullString{String: "0 to 1 mm", Valid: true},
+		Narrative:     sql.NullString{String: "Legacy BOM narrative.", Valid: true},
+	})
+	insertForecastForLiveBOMTest(t, s, models.Forecast{
+		Source:        "bom_daily_api",
+		FetchedAt:     fetchedAt,
+		ValidDate:     validDate,
+		DayOfForecast: 0,
+		TempMax:       sql.NullFloat64{Float64: 31, Valid: true},
+		TempMin:       sql.NullFloat64{Float64: 9, Valid: true},
+		PrecipRange:   sql.NullString{String: "3 to 8 mm", Valid: true},
+		Narrative:     sql.NullString{String: "Daily API narrative.", Valid: true},
+	})
+
+	srv := api.NewServer(s, "8080", loc, nil)
+	req := httptest.NewRequest("GET", "/api/current", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var response struct {
+		TodayForecast *struct {
+			TempMax       float64 `json:"TempMax"`
+			PrecipDisplay string  `json:"PrecipDisplay"`
+			Narrative     string  `json:"Narrative"`
+			Explanation   struct {
+				MaxRaw float64 `json:"MaxRaw"`
+			} `json:"Explanation"`
+		} `json:"TodayForecast"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode current response: %v", err)
+	}
+	if response.TodayForecast == nil {
+		t.Fatal("expected today forecast")
+	}
+	if response.TodayForecast.Explanation.MaxRaw != 31 {
+		t.Fatalf("expected daily API max raw 31, got %.1f", response.TodayForecast.Explanation.MaxRaw)
+	}
+	if response.TodayForecast.TempMax != 31 {
+		t.Fatalf("expected daily API max display 31, got %.1f", response.TodayForecast.TempMax)
+	}
+	if response.TodayForecast.PrecipDisplay != "3–8mm" {
+		t.Fatalf("expected daily API precip range, got %q", response.TodayForecast.PrecipDisplay)
+	}
+	if !strings.Contains(response.TodayForecast.Narrative, "Daily API narrative") {
+		t.Fatalf("expected daily API narrative, got %q", response.TodayForecast.Narrative)
+	}
+}
+
+func TestAPIForecast_UsesDailyAPIBOMForecastForLiveRead(t *testing.T) {
+	t.Parallel()
+
+	s, loc := setupTestStore(t)
+
+	now := time.Now().UTC()
+	validDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	fetchedAt := now.Add(-10 * time.Minute).Truncate(time.Second)
+	insertForecastForLiveBOMTest(t, s, models.Forecast{
+		Source:        "wu",
+		FetchedAt:     fetchedAt,
+		ValidDate:     validDate,
+		DayOfForecast: 0,
+		TempMax:       sql.NullFloat64{Float64: 27, Valid: true},
+		TempMin:       sql.NullFloat64{Float64: 11, Valid: true},
+		Narrative:     sql.NullString{String: "Partly cloudy.", Valid: true},
+	})
+	insertForecastForLiveBOMTest(t, s, models.Forecast{
+		Source:        "bom",
+		FetchedAt:     fetchedAt,
+		ValidDate:     validDate,
+		DayOfForecast: 0,
+		TempMax:       sql.NullFloat64{Float64: 22, Valid: true},
+		TempMin:       sql.NullFloat64{Float64: 8, Valid: true},
+		PrecipRange:   sql.NullString{String: "0 to 1 mm", Valid: true},
+		Narrative:     sql.NullString{String: "Legacy BOM narrative.", Valid: true},
+	})
+	insertForecastForLiveBOMTest(t, s, models.Forecast{
+		Source:        "bom_daily_api",
+		FetchedAt:     fetchedAt,
+		ValidDate:     validDate,
+		DayOfForecast: 0,
+		TempMax:       sql.NullFloat64{Float64: 31, Valid: true},
+		TempMin:       sql.NullFloat64{Float64: 9, Valid: true},
+		PrecipRange:   sql.NullString{String: "3 to 8 mm", Valid: true},
+		Narrative:     sql.NullString{String: "Daily API narrative.", Valid: true},
+	})
+	if err := s.UpsertCorrectionStats(store.CorrectionStats{
+		Source:        "bom",
+		Target:        "tmax",
+		DayOfForecast: 0,
+		Regime:        "all",
+		WindowDays:    30,
+		SampleSize:    10,
+		MeanBias:      2,
+	}); err != nil {
+		t.Fatalf("upsert legacy BOM correction stats: %v", err)
+	}
+	if err := s.UpsertCorrectionStats(store.CorrectionStats{
+		Source:        "bom_daily_api",
+		Target:        "tmax",
+		DayOfForecast: 0,
+		Regime:        "all",
+		WindowDays:    30,
+		SampleSize:    10,
+		MeanBias:      5,
+	}); err != nil {
+		t.Fatalf("upsert daily API correction stats: %v", err)
+	}
+
+	srv := api.NewServer(s, "8080", loc, nil)
+	req := httptest.NewRequest("GET", "/api/forecast", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var response struct {
+		Days []struct {
+			BOM struct {
+				Source  string `json:"Source"`
+				TempMax struct {
+					Float64 float64 `json:"Float64"`
+					Valid   bool    `json:"Valid"`
+				} `json:"TempMax"`
+			} `json:"BOM"`
+			BOMCorrectedMax    *float64 `json:"bom_corrected_max"`
+			PrecipDisplay      string   `json:"precip_display"`
+			GeneratedNarrative string   `json:"generated_narrative"`
+		} `json:"Days"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode forecast response: %v", err)
+	}
+	if len(response.Days) == 0 {
+		t.Fatal("expected forecast days")
+	}
+	if response.Days[0].BOM.Source != "bom_daily_api" {
+		t.Fatalf("expected live BOM source bom_daily_api, got %q", response.Days[0].BOM.Source)
+	}
+	if !response.Days[0].BOM.TempMax.Valid || response.Days[0].BOM.TempMax.Float64 != 31 {
+		t.Fatalf("expected daily API max 31, got %+v", response.Days[0].BOM.TempMax)
+	}
+	if response.Days[0].BOMCorrectedMax == nil {
+		t.Fatal("expected daily API corrected max 26, got nil")
+	}
+	if *response.Days[0].BOMCorrectedMax != 26 {
+		t.Fatalf("expected daily API corrected max 26, got %.1f", *response.Days[0].BOMCorrectedMax)
+	}
+	if response.Days[0].PrecipDisplay != "3–8mm" {
+		t.Fatalf("expected daily API precip range, got %q", response.Days[0].PrecipDisplay)
+	}
+	if !strings.Contains(response.Days[0].GeneratedNarrative, "Daily API narrative") {
+		t.Fatalf("expected daily API narrative, got %q", response.Days[0].GeneratedNarrative)
+	}
+}
+
+func insertForecastForLiveBOMTest(t *testing.T, s *store.Store, forecast models.Forecast) {
+	t.Helper()
+	if err := s.InsertForecast(forecast); err != nil {
+		t.Fatalf("insert %s forecast: %v", forecast.Source, err)
+	}
+}
+
 func TestAccuracyPage_NoData(t *testing.T) {
 	t.Parallel()
 	s, loc := setupTestStore(t)

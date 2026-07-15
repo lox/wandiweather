@@ -1,11 +1,13 @@
 package ingest
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -72,7 +74,24 @@ func NewBOMDailyAPIClient(locationID string) *BOMDailyAPIClient {
 	return &BOMDailyAPIClient{
 		locationID: locationID,
 		baseURL:    bomAPIBaseURL,
-		client:     httputil.NewClient(),
+		client:     newBOMDailyAPIHTTPClient(nil),
+	}
+}
+
+func newBOMDailyAPIHTTPClient(dialContext func(context.Context, string, string) (net.Conn, error)) *http.Client {
+	if dialContext == nil {
+		dialer := &net.Dialer{Timeout: httputil.DefaultTimeout}
+		dialContext = dialer.DialContext
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = func(ctx context.Context, _ string, address string) (net.Conn, error) {
+		return dialContext(ctx, "tcp4", address)
+	}
+
+	return &http.Client{
+		Timeout:   httputil.DefaultTimeout,
+		Transport: transport,
 	}
 }
 

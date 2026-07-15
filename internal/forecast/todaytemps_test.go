@@ -127,6 +127,30 @@ func TestComputeTodayTemps(t *testing.T) {
 			haveMax: true,
 		},
 		{
+			name: "uses the actual BOM forecast source for max bias correction",
+			input: TodayTempInput{
+				BOMForecast: &models.Forecast{
+					Source:        "bom_daily_api",
+					TempMax:       sql.NullFloat64{Float64: 30, Valid: true},
+					DayOfForecast: 0,
+				},
+				CorrectionStats: map[string]map[string]map[int]*store.CorrectionStats{
+					"bom": {
+						"tmax": {
+							0: {MeanBias: 2.0, SampleSize: 10},
+						},
+					},
+					"bom_daily_api": {
+						"tmax": {
+							0: {MeanBias: 5.0, SampleSize: 10},
+						},
+					},
+				},
+			},
+			wantMax: 25, // 30 - 5.0 daily API bias
+			haveMax: true,
+		},
+		{
 			name: "applies bias correction to min",
 			input: TodayTempInput{
 				WUForecast: &models.Forecast{
@@ -181,7 +205,7 @@ func TestComputeTodayTemps(t *testing.T) {
 			haveMax: true,
 		},
 		{
-			name: "no forecast data returns zero values",
+			name:  "no forecast data returns zero values",
 			input: TodayTempInput{},
 		},
 		{

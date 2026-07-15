@@ -798,23 +798,28 @@ func (s *Store) GetTempChangeRate(stationID string) (sql.NullFloat64, error) {
 	return result, nil
 }
 
-// GetLastBOMPrecipRange returns the most recent BOM precip_range for a given valid date.
-// Used as fallback when the current BOM forecast (D+0) has dropped the range.
-func (s *Store) GetLastBOMPrecipRange(validDate time.Time) (string, error) {
+// GetLastForecastPrecipRange returns the most recent precip_range for a source/date.
+// Used as fallback when the current live forecast has dropped the range.
+func (s *Store) GetLastForecastPrecipRange(source string, validDate time.Time) (string, error) {
 	dateStr := validDate.Format("2006-01-02")
 	var result sql.NullString
 	err := s.db.QueryRow(`
 		SELECT precip_range FROM forecasts
-		WHERE source = 'bom'
+		WHERE source = ?
 		  AND SUBSTR(valid_date, 1, 10) = ?
 		  AND precip_range IS NOT NULL AND precip_range != ''
 		ORDER BY fetched_at DESC
 		LIMIT 1
-	`, dateStr).Scan(&result)
+	`, source, dateStr).Scan(&result)
 	if err == sql.ErrNoRows || !result.Valid {
 		return "", nil
 	}
 	return result.String, err
+}
+
+// GetLastBOMPrecipRange returns the most recent legacy BOM precip_range for a valid date.
+func (s *Store) GetLastBOMPrecipRange(validDate time.Time) (string, error) {
+	return s.GetLastForecastPrecipRange("bom", validDate)
 }
 
 func (s *Store) GetLatestForecasts() (map[string][]models.Forecast, error) {
