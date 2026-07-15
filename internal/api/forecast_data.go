@@ -60,7 +60,7 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 		}
 	}
 
-	for _, fc := range forecasts["bom"] {
+	for _, fc := range liveBOMForecasts(forecasts) {
 		key := fc.ValidDate.Format("2006-01-02")
 		if dayMap[key] == nil {
 			dayMap[key] = &ForecastDay{
@@ -72,15 +72,16 @@ func (s *Server) getForecastData() (*ForecastData, error) {
 		}
 		f := fc
 		dayMap[key].BOM = &f
+		correctionSource := bomCorrectionSource(fc)
 
 		if fc.TempMax.Valid {
-			if bias := forecast.LookupBias(correctionStats, "bom", "tmax", fc.DayOfForecast); bias != 0 {
+			if bias := forecast.LookupBias(correctionStats, correctionSource, "tmax", fc.DayOfForecast); bias != 0 {
 				corrected := fc.TempMax.Float64 - bias
 				dayMap[key].BOMCorrectedMax = &corrected
 			}
 		}
 		if fc.TempMin.Valid {
-			if bias := forecast.LookupBias(correctionStats, "bom", "tmin", fc.DayOfForecast); bias != 0 {
+			if bias := forecast.LookupBias(correctionStats, correctionSource, "tmin", fc.DayOfForecast); bias != 0 {
 				corrected := fc.TempMin.Float64 - bias
 				dayMap[key].BOMCorrectedMin = &corrected
 			}
@@ -261,15 +262,21 @@ func chooseTemps(day *ForecastDay) (hi, lo float64, haveHi, haveLo bool) {
 }
 
 // buildPrecipDisplay returns a display string for precipitation amount.
-// Prefers BOM's range (e.g. "0–5mm"), falls back to WU amount.
+// Prefers the live BOM range (e.g. "0–5mm"), falls back to WU amount.
 func buildPrecipDisplay(day *ForecastDay, store precipRangeLookup) string {
 	if day.BOM != nil && day.BOM.PrecipRange.Valid {
 		return formatPrecipRange(day.BOM.PrecipRange.String)
 	}
-	// Fall back to the last known BOM range for this date
 	if store != nil {
-		if r, err := store.GetLastBOMPrecipRange(day.Date); err == nil && r != "" {
-			return formatPrecipRange(r)
+		if day.BOM != nil && day.BOM.Source != "" {
+			if r, err := store.GetLastForecastPrecipRange(day.BOM.Source, day.Date); err == nil && r != "" {
+				return formatPrecipRange(r)
+			}
+		}
+		if day.BOM == nil || day.BOM.Source != legacyBOMForecastSource {
+			if r, err := store.GetLastForecastPrecipRange(legacyBOMForecastSource, day.Date); err == nil && r != "" {
+				return formatPrecipRange(r)
+			}
 		}
 	}
 	if day.WU != nil && day.WU.PrecipAmount.Valid && day.WU.PrecipAmount.Float64 > 0 {
@@ -280,7 +287,7 @@ func buildPrecipDisplay(day *ForecastDay, store precipRangeLookup) string {
 
 // precipRangeLookup is the subset of store needed for precip display.
 type precipRangeLookup interface {
-	GetLastBOMPrecipRange(validDate time.Time) (string, error)
+	GetLastForecastPrecipRange(source string, validDate time.Time) (string, error)
 }
 
 // formatPrecipRange converts BOM's "25 to 60 mm" to compact "25–60mm".

@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/lox/wandiweather/internal/models"
 )
@@ -258,4 +259,74 @@ func TestBuildGeneratedNarrative(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLiveBOMForecastsPrefersDailyAPIWithLegacyFallback(t *testing.T) {
+	today := time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC)
+	tomorrow := today.AddDate(0, 0, 1)
+	legacy := models.Forecast{Source: "bom", ValidDate: today}
+	dailyAPI := models.Forecast{Source: "bom_daily_api", ValidDate: today}
+
+	got := liveBOMForecasts(map[string][]models.Forecast{
+		"bom":           {legacy},
+		"bom_daily_api": {dailyAPI},
+	})
+	if len(got) != 1 || got[0].Source != "bom_daily_api" {
+		t.Fatalf("liveBOMForecasts() = %+v, want daily API", got)
+	}
+
+	got = liveBOMForecasts(map[string][]models.Forecast{
+		"bom": {legacy},
+	})
+	if len(got) != 1 || got[0].Source != "bom" {
+		t.Fatalf("liveBOMForecasts() = %+v, want legacy fallback", got)
+	}
+
+	got = liveBOMForecasts(map[string][]models.Forecast{
+		"bom":           {legacy},
+		"bom_daily_api": {{Source: "bom_daily_api", ValidDate: tomorrow}},
+	})
+	if len(got) != 2 {
+		t.Fatalf("liveBOMForecasts() returned %d forecasts, want daily API plus legacy date fallback", len(got))
+	}
+	if got[0].Source != "bom" || !got[0].ValidDate.Equal(today) {
+		t.Fatalf("liveBOMForecasts()[0] = %+v, want legacy fallback for missing today", got[0])
+	}
+	if got[1].Source != "bom_daily_api" || !got[1].ValidDate.Equal(tomorrow) {
+		t.Fatalf("liveBOMForecasts()[1] = %+v, want daily API tomorrow", got[1])
+	}
+}
+
+func TestBuildPrecipDisplayFallsBackToLiveBOMSourceBeforeLegacy(t *testing.T) {
+	store := fakePrecipRangeLookup{
+		ranges: map[string]string{
+			"bom_daily_api": "3 to 8 mm",
+			"bom":           "0 to 1 mm",
+		},
+	}
+
+	got := buildPrecipDisplay(&ForecastDay{
+		Date: time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC),
+		BOM:  &models.Forecast{Source: "bom_daily_api"},
+	}, store)
+	if got != "3–8mm" {
+		t.Fatalf("buildPrecipDisplay() = %q, want daily API range", got)
+	}
+
+	store.ranges["bom_daily_api"] = ""
+	got = buildPrecipDisplay(&ForecastDay{
+		Date: time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC),
+		BOM:  &models.Forecast{Source: "bom_daily_api"},
+	}, store)
+	if got != "0–1mm" {
+		t.Fatalf("buildPrecipDisplay() = %q, want legacy fallback range", got)
+	}
+}
+
+type fakePrecipRangeLookup struct {
+	ranges map[string]string
+}
+
+func (f fakePrecipRangeLookup) GetLastForecastPrecipRange(source string, _ time.Time) (string, error) {
+	return f.ranges[source], nil
 }

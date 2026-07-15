@@ -29,14 +29,14 @@ type TodayTempInput struct {
 
 // TodayTempResult contains the computed display temperatures and explanation.
 type TodayTempResult struct {
-	TempMax              float64
-	TempMin              float64
-	TempMaxPreNowcast    float64 // max temp before nowcast adjustment (for UI "revised from" display)
-	NowcastApplied       bool
-	NowcastAdjustment    float64
-	Explanation          TempExplanation
-	HaveMax              bool
-	HaveMin              bool
+	TempMax           float64
+	TempMin           float64
+	TempMaxPreNowcast float64 // max temp before nowcast adjustment (for UI "revised from" display)
+	NowcastApplied    bool
+	NowcastAdjustment float64
+	Explanation       TempExplanation
+	HaveMax           bool
+	HaveMin           bool
 }
 
 // TempExplanation tracks how the forecast was calculated.
@@ -129,6 +129,13 @@ func LookupBias(stats map[string]map[string]map[int]*store.CorrectionStats, sour
 	return LookupBiasWithFallback(stats, source, target, dayOfForecast).Bias
 }
 
+func sourceForBOMCorrection(f *models.Forecast) string {
+	if f != nil && f.Source != "" {
+		return f.Source
+	}
+	return "bom"
+}
+
 // ComputeTodayTemps calculates today's display temperatures using standardized logic:
 // - Max temp: prefer BOM (with sanity checks), apply bias correction + nowcast, use observed as floor
 // - Min temp: prefer WU, apply bias correction, use observed as ceiling
@@ -138,6 +145,7 @@ func ComputeTodayTemps(input TodayTempInput) TodayTempResult {
 
 	wuForecast := input.WUForecast
 	bomForecast := input.BOMForecast
+	bomCorrectionSource := sourceForBOMCorrection(bomForecast)
 
 	// MAX TEMP: prefer BOM (better accuracy), but fall back to WU if BOM is unreasonable
 	// "Unreasonable" = current temp already exceeds BOM forecast by >3°C, or BOM differs from WU by >10°C
@@ -157,7 +165,7 @@ func ComputeTodayTemps(input TodayTempInput) TodayTempResult {
 		result.TempMax = bomForecast.TempMax.Float64
 		result.HaveMax = true
 
-		biasResult := LookupBiasWithFallback(input.CorrectionStats, "bom", "tmax", bomForecast.DayOfForecast)
+		biasResult := LookupBiasWithFallback(input.CorrectionStats, bomCorrectionSource, "tmax", bomForecast.DayOfForecast)
 		if biasResult.DayUsed >= 0 {
 			exp.MaxBiasApplied = biasResult.Bias
 			exp.MaxBiasDayUsed = biasResult.DayUsed
@@ -171,7 +179,7 @@ func ComputeTodayTemps(input TodayTempInput) TodayTempResult {
 
 		// Nowcast using BOM as base
 		if bomForecast.DayOfForecast == 0 && input.PrimaryStationID != "" && input.BiasCorrector != nil && input.Nowcaster != nil {
-			biasMax := input.BiasCorrector.GetCorrection("bom", "tmax", 0)
+			biasMax := input.BiasCorrector.GetCorrection(bomCorrectionSource, "tmax", 0)
 			nowcast, err := input.Nowcaster.ComputeNowcast(input.PrimaryStationID, bomForecast.TempMax.Float64, biasMax)
 			if err == nil && nowcast != nil {
 				exp.MaxNowcast = nowcast.Adjustment
@@ -265,7 +273,7 @@ func ComputeTodayTemps(input TodayTempInput) TodayTempResult {
 		result.TempMin = bomForecast.TempMin.Float64
 		result.HaveMin = true
 
-		biasResult := LookupBiasWithFallback(input.CorrectionStats, "bom", "tmin", bomForecast.DayOfForecast)
+		biasResult := LookupBiasWithFallback(input.CorrectionStats, bomCorrectionSource, "tmin", bomForecast.DayOfForecast)
 		if biasResult.DayUsed >= 0 {
 			exp.MinBiasApplied = biasResult.Bias
 			exp.MinBiasDayUsed = biasResult.DayUsed
