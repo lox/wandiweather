@@ -29,14 +29,14 @@ func NewForecastClient(apiKey string, lat, lon float64) *ForecastClient {
 }
 
 type ForecastResponse struct {
-	DayOfWeek            []string   `json:"dayOfWeek"`
-	ValidTimeLocal       []string   `json:"validTimeLocal"`
-	ExpirationTimeUtc    []int64    `json:"expirationTimeUtc"`
-	CalendarDayTempMax   []float64  `json:"calendarDayTemperatureMax"`
-	CalendarDayTempMin   []float64  `json:"calendarDayTemperatureMin"`
-	DaypartName          []string   `json:"daypartName"`
-	Narrative            []string   `json:"narrative"`
-	Daypart              []Daypart  `json:"daypart"`
+	DayOfWeek          []string  `json:"dayOfWeek"`
+	ValidTimeLocal     []string  `json:"validTimeLocal"`
+	ExpirationTimeUtc  []int64   `json:"expirationTimeUtc"`
+	CalendarDayTempMax []float64 `json:"calendarDayTemperatureMax"`
+	CalendarDayTempMin []float64 `json:"calendarDayTemperatureMin"`
+	DaypartName        []string  `json:"daypartName"`
+	Narrative          []string  `json:"narrative"`
+	Daypart            []Daypart `json:"daypart"`
 }
 
 type Daypart struct {
@@ -80,13 +80,25 @@ func (f *ForecastClient) Fetch5Day() ([]models.Forecast, string, *FetchResult, e
 	}
 	result.ResponseSize = len(body)
 
+	forecasts, parseResult, err := parseForecasts(body, geocode, time.Now().UTC())
+	mergeFetchResult(result, parseResult)
+	if err != nil {
+		result.Error = err
+		return nil, string(body), result, err
+	}
+
+	return forecasts, string(body), result, nil
+}
+
+func parseForecasts(body []byte, geocode string, fetchedAt time.Time) ([]models.Forecast, *FetchResult, error) {
+	result := &FetchResult{}
+
 	var data ForecastResponse
 	if err := json.Unmarshal(body, &data); err != nil {
 		result.Error = fmt.Errorf("unmarshal: %w", err)
-		return nil, string(body), result, result.Error
+		return nil, result, result.Error
 	}
 
-	fetchedAt := time.Now().UTC()
 	var forecasts []models.Forecast
 	var parseErrors []string
 
@@ -131,22 +143,30 @@ func (f *ForecastClient) Fetch5Day() ([]models.Forecast, string, *FetchResult, e
 			var hasQPF, hasPrecip bool
 
 			if dayIdx < len(daypart.QPF) && daypart.QPF[dayIdx] != nil {
-				totalQPF += *daypart.QPF[dayIdx]
+				dayQPF := *daypart.QPF[dayIdx]
+				fc.PrecipAmountDay = sql.NullFloat64{Float64: dayQPF, Valid: true}
+				totalQPF += dayQPF
 				hasQPF = true
 			}
 			if nightIdx < len(daypart.QPF) && daypart.QPF[nightIdx] != nil {
-				totalQPF += *daypart.QPF[nightIdx]
+				nightQPF := *daypart.QPF[nightIdx]
+				fc.PrecipAmountNight = sql.NullFloat64{Float64: nightQPF, Valid: true}
+				totalQPF += nightQPF
 				hasQPF = true
 			}
 			if dayIdx < len(daypart.PrecipChance) && daypart.PrecipChance[dayIdx] != nil {
-				if *daypart.PrecipChance[dayIdx] > maxPrecipChance {
-					maxPrecipChance = *daypart.PrecipChance[dayIdx]
+				dayChance := *daypart.PrecipChance[dayIdx]
+				fc.PrecipChanceDay = sql.NullInt64{Int64: int64(dayChance), Valid: true}
+				if dayChance > maxPrecipChance {
+					maxPrecipChance = dayChance
 				}
 				hasPrecip = true
 			}
 			if nightIdx < len(daypart.PrecipChance) && daypart.PrecipChance[nightIdx] != nil {
-				if *daypart.PrecipChance[nightIdx] > maxPrecipChance {
-					maxPrecipChance = *daypart.PrecipChance[nightIdx]
+				nightChance := *daypart.PrecipChance[nightIdx]
+				fc.PrecipChanceNight = sql.NullInt64{Int64: int64(nightChance), Valid: true}
+				if nightChance > maxPrecipChance {
+					maxPrecipChance = nightChance
 				}
 				hasPrecip = true
 			}
@@ -175,5 +195,5 @@ func (f *ForecastClient) Fetch5Day() ([]models.Forecast, string, *FetchResult, e
 		result.ParseError = fmt.Sprintf("%d parse errors: %v", len(parseErrors), parseErrors[0])
 	}
 
-	return forecasts, string(body), result, nil
+	return forecasts, result, nil
 }

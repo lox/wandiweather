@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"database/sql"
+	"path/filepath"
+	"testing"
+)
 
 func TestModeRequiresPWSKey(t *testing.T) {
 	tests := []struct {
@@ -34,5 +38,21 @@ func TestModeRequiresPWSKey(t *testing.T) {
 				t.Fatalf("modeRequiresPWSKey() = %t, want %t", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSQLiteDSNEnablesForeignKeys(t *testing.T) {
+	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "test.db")))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	var enabled int
+	if err := db.QueryRow("PRAGMA foreign_keys").Scan(&enabled); err != nil {
+		t.Fatalf("query foreign_keys pragma: %v", err)
+	}
+	if enabled != 1 {
+		t.Fatalf("foreign_keys = %d, want 1", enabled)
 	}
 }

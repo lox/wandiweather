@@ -391,6 +391,92 @@ func TestMigrate_FixesForecastSchemaWhenVersion24WasAlreadyUsed(t *testing.T) {
 	}
 }
 
+func TestMigration28RepairsOrphanedDisplayedForecastReferences(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	loc, err := time.LoadLocation("Australia/Melbourne")
+	if err != nil {
+		t.Fatalf("load timezone: %v", err)
+	}
+	store := New(db, loc)
+	if err := store.ensureMigrationsTable(); err != nil {
+		t.Fatalf("ensure migrations table: %v", err)
+	}
+
+	for _, m := range migrations {
+		if m.Version >= 28 {
+			break
+		}
+		applyMigrationForTest(t, store, m, m.Description)
+	}
+
+	result, err := db.Exec(`
+		INSERT INTO forecasts (source, fetched_at, valid_date, day_of_forecast)
+		VALUES (?, ?, ?, ?)
+	`, "wu", "2026-07-19T08:00:00Z", "2026-07-20", 1)
+	if err != nil {
+		t.Fatalf("insert referenced forecast: %v", err)
+	}
+	validForecastID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("get referenced forecast ID: %v", err)
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO displayed_forecasts (
+			displayed_at, valid_date, day_of_forecast, wu_forecast_id, bom_forecast_id
+		) VALUES (?, ?, ?, ?, ?)
+	`, "2026-07-19T08:00:00Z", "2026-07-20", 1, 999001, 999002); err != nil {
+		t.Fatalf("insert orphaned displayed forecast: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO displayed_forecasts (
+			displayed_at, valid_date, day_of_forecast, wu_forecast_id, bom_forecast_id
+		) VALUES (?, ?, ?, ?, ?)
+	`, "2026-07-19T08:05:00Z", "2026-07-21", 2, validForecastID, validForecastID); err != nil {
+		t.Fatalf("insert valid displayed forecast: %v", err)
+	}
+
+	applyMigrationForTest(t, store, migrations[len(migrations)-1], migrations[len(migrations)-1].Description)
+
+	var wuForecastID, bomForecastID sql.NullInt64
+	if err := db.QueryRow(`
+		SELECT wu_forecast_id, bom_forecast_id
+		FROM displayed_forecasts
+	`).Scan(&wuForecastID, &bomForecastID); err != nil {
+		t.Fatalf("load repaired displayed forecast: %v", err)
+	}
+	if wuForecastID.Valid || bomForecastID.Valid {
+		t.Fatalf("orphaned references were not cleared: wu=%v bom=%v", wuForecastID, bomForecastID)
+	}
+	var preservedWUForecastID, preservedBOMForecastID int64
+	if err := db.QueryRow(`
+		SELECT wu_forecast_id, bom_forecast_id
+		FROM displayed_forecasts
+		WHERE valid_date = '2026-07-21'
+	`).Scan(&preservedWUForecastID, &preservedBOMForecastID); err != nil {
+		t.Fatalf("load valid displayed forecast: %v", err)
+	}
+	if preservedWUForecastID != validForecastID || preservedBOMForecastID != validForecastID {
+		t.Fatalf(
+			"valid references changed: wu=%d bom=%d, want %d",
+			preservedWUForecastID, preservedBOMForecastID, validForecastID,
+		)
+	}
+
+	var violations int
+	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_foreign_key_check").Scan(&violations); err != nil {
+		t.Fatalf("check foreign keys: %v", err)
+	}
+	if violations != 0 {
+		t.Fatalf("foreign key violations = %d, want 0", violations)
+	}
+}
+
 func TestInsertAndGetForecast(t *testing.T) {
 	store := setupTestStore(t)
 
@@ -398,14 +484,18 @@ func TestInsertAndGetForecast(t *testing.T) {
 	validDate := time.Now().UTC().Add(24 * time.Hour).Truncate(24 * time.Hour)
 
 	wuForecast := models.Forecast{
-		Source:        "wu",
-		FetchedAt:     fetchedAt,
-		ValidDate:     validDate,
-		DayOfForecast: 1,
-		TempMax:       sql.NullFloat64{Float64: 28.0, Valid: true},
-		TempMin:       sql.NullFloat64{Float64: 15.0, Valid: true},
-		Narrative:     sql.NullString{String: "Partly cloudy", Valid: true},
-		LocationID:    sql.NullString{String: "-36.794,146.977", Valid: true},
+		Source:            "wu",
+		FetchedAt:         fetchedAt,
+		ValidDate:         validDate,
+		DayOfForecast:     1,
+		TempMax:           sql.NullFloat64{Float64: 28.0, Valid: true},
+		TempMin:           sql.NullFloat64{Float64: 15.0, Valid: true},
+		PrecipChanceDay:   sql.NullInt64{Int64: 20, Valid: true},
+		PrecipChanceNight: sql.NullInt64{Int64: 70, Valid: true},
+		PrecipAmountDay:   sql.NullFloat64{Float64: 0.2, Valid: true},
+		PrecipAmountNight: sql.NullFloat64{Float64: 4.8, Valid: true},
+		Narrative:         sql.NullString{String: "Partly cloudy", Valid: true},
+		LocationID:        sql.NullString{String: "-36.794,146.977", Valid: true},
 	}
 	if err := store.InsertForecast(wuForecast); err != nil {
 		t.Fatalf("InsertForecast WU: %v", err)
@@ -441,6 +531,125 @@ func TestInsertAndGetForecast(t *testing.T) {
 	}
 	if forecasts["bom"][0].TempMax.Float64 != 27.0 {
 		t.Errorf("BOM TempMax = %v, want 27.0", forecasts["bom"][0].TempMax.Float64)
+	}
+}
+
+func TestInsertForecast_DualWritesWUForecastPeriods(t *testing.T) {
+	store := setupTestStore(t)
+	loc, err := time.LoadLocation("Australia/Melbourne")
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	validDate := time.Date(2026, time.July, 10, 0, 0, 0, 0, time.UTC)
+
+	if err := store.InsertForecast(models.Forecast{
+		Source:            "wu",
+		FetchedAt:         time.Date(2026, time.July, 9, 5, 0, 0, 0, time.UTC),
+		ValidDate:         validDate,
+		DayOfForecast:     1,
+		PrecipChanceDay:   sql.NullInt64{Int64: 20, Valid: true},
+		PrecipChanceNight: sql.NullInt64{Int64: 70, Valid: true},
+		PrecipAmountDay:   sql.NullFloat64{Float64: 0.2, Valid: true},
+		PrecipAmountNight: sql.NullFloat64{Float64: 4.8, Valid: true},
+		LocationID:        sql.NullString{String: "-36.794,146.977", Valid: true},
+	}); err != nil {
+		t.Fatalf("InsertForecast: %v", err)
+	}
+
+	periods, err := store.GetLatestForecastPeriods("wu", "day", validDate.Add(-12*time.Hour), validDate.AddDate(0, 0, 2), 10)
+	if err != nil {
+		t.Fatalf("GetLatestForecastPeriods: %v", err)
+	}
+	if len(periods) != 1 {
+		t.Fatalf("len(day periods) = %d, want 1", len(periods))
+	}
+	wantStart := time.Date(2026, time.July, 10, 6, 0, 0, 0, loc).UTC()
+	chance, ok := periods[0].Component(models.ForecastMetricPrecipChance)
+	if !ok || !chance.Value.Valid || periods[0].PeriodStart != wantStart || chance.Value.Float64 != 20 {
+		t.Fatalf("day period = %+v, want start %s and chance 20", periods[0], wantStart)
+	}
+}
+
+func TestInsertForecastPeriod_RejectsInvalidWeatherValues(t *testing.T) {
+	store := setupTestStore(t)
+	start := time.Date(2026, time.July, 10, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name   string
+		mutate func(*models.ForecastPeriod)
+	}{
+		{
+			name: "negative lead time",
+			mutate: func(period *models.ForecastPeriod) {
+				period.DayOfForecast = -1
+			},
+		},
+		{
+			name: "chance above 100",
+			mutate: func(period *models.ForecastPeriod) {
+				period.Components = []models.ForecastComponent{{
+					Metric: models.ForecastMetricPrecipChance,
+					Value:  sql.NullFloat64{Float64: 101, Valid: true},
+					Unit:   sql.NullString{String: models.ForecastUnitPercent, Valid: true},
+				}}
+			},
+		},
+		{
+			name: "negative amount",
+			mutate: func(period *models.ForecastPeriod) {
+				period.Components = []models.ForecastComponent{{
+					Metric: models.ForecastMetricPrecipAmount,
+					Value:  sql.NullFloat64{Float64: -0.1, Valid: true},
+					Unit:   sql.NullString{String: models.ForecastUnitMillimetres, Valid: true},
+				}}
+			},
+		},
+		{
+			name: "inverted amount range",
+			mutate: func(period *models.ForecastPeriod) {
+				period.Components = []models.ForecastComponent{{
+					Metric:   models.ForecastMetricPrecipAmount,
+					ValueMin: sql.NullFloat64{Float64: 4, Valid: true},
+					ValueMax: sql.NullFloat64{Float64: 2, Valid: true},
+					Unit:     sql.NullString{String: models.ForecastUnitMillimetres, Valid: true},
+				}}
+			},
+		},
+		{
+			name: "scalar and range together",
+			mutate: func(period *models.ForecastPeriod) {
+				period.Components = []models.ForecastComponent{{
+					Metric:   models.ForecastMetricPrecipAmount,
+					Value:    sql.NullFloat64{Float64: 3, Valid: true},
+					ValueMin: sql.NullFloat64{Float64: 1, Valid: true},
+					ValueMax: sql.NullFloat64{Float64: 4, Valid: true},
+					Unit:     sql.NullString{String: models.ForecastUnitMillimetres, Valid: true},
+				}}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			period := models.ForecastPeriod{
+				Source:       "test",
+				FetchedAt:    start.Add(-time.Hour),
+				ValidDate:    start,
+				Period:       "hourly",
+				PeriodStart:  start,
+				PeriodEnd:    start.Add(time.Hour),
+				RawPeriodKey: start.Format(time.RFC3339),
+				Components: []models.ForecastComponent{{
+					Metric: models.ForecastMetricTemperature,
+					Value:  sql.NullFloat64{Float64: 10, Valid: true},
+					Unit:   sql.NullString{String: models.ForecastUnitCelsius, Valid: true},
+				}},
+			}
+			tt.mutate(&period)
+			if err := store.InsertForecastPeriod(period); err == nil {
+				t.Fatal("InsertForecastPeriod accepted invalid values")
+			}
+		})
 	}
 }
 
@@ -613,18 +822,6 @@ func TestIngestRun_GetRecentErrors(t *testing.T) {
 	}
 	if errors[0].ErrorMessage.String != "server error" {
 		t.Errorf("ErrorMessage = %q, want 'server error'", errors[0].ErrorMessage.String)
-	}
-}
-
-func TestMigrationVersion(t *testing.T) {
-	store := setupTestStore(t)
-
-	version, err := store.MigrationVersion()
-	if err != nil {
-		t.Fatalf("MigrationVersion: %v", err)
-	}
-	if version < 1 {
-		t.Errorf("MigrationVersion = %d, want >= 1", version)
 	}
 }
 

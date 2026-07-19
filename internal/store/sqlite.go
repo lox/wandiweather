@@ -183,7 +183,13 @@ func (s *Store) InsertForecast(f models.Forecast) error {
 	if source == "" {
 		source = "wu"
 	}
-	_, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin forecast insert: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		INSERT INTO forecasts (
 			source, fetched_at, valid_date, day_of_forecast,
 			temp_max, temp_min, humidity, precip_chance, precip_amount, precip_range,
@@ -198,7 +204,24 @@ func (s *Store) InsertForecast(f models.Forecast) error {
 		f.PrecipMin, f.PrecipMax, f.PrecipUnits,
 		f.WindSpeed, f.WindDir, f.Narrative, f.NarrativeShort, f.NarrativeExtended,
 		f.RawJSON, f.LocationID)
-	return err
+	if err != nil {
+		return err
+	}
+	var forecastID int64
+	if err := tx.QueryRow(`
+		SELECT id FROM forecasts
+		WHERE source = ? AND fetched_at = ? AND valid_date = ?
+	`, source, f.FetchedAt, f.ValidDate).Scan(&forecastID); err != nil {
+		return fmt.Errorf("resolve inserted forecast: %w", err)
+	}
+	f.Source = source
+	if err := s.insertForecastPeriodsForForecast(tx, f, forecastID); err != nil {
+		return fmt.Errorf("insert forecast periods: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit forecast insert: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) ComputeDailySummary(stationID string, date time.Time) (*models.DailySummary, error) {

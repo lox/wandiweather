@@ -26,6 +26,7 @@ const (
 	wangarattaGeohash6 = "r3811m"
 	bomSource          = "bom"
 	bomDailyAPISource  = "bom_daily_api"
+	bomHourlyAPISource = "bom_hourly_api"
 )
 
 type bomForecastSource interface {
@@ -65,6 +66,12 @@ type BOMDailyAPIClient struct {
 	client     *http.Client
 }
 
+type BOMHourlyAPIClient struct {
+	locationID string
+	baseURL    string
+	client     *http.Client
+}
+
 func NewBOMDailyAPIClient(locationID string) *BOMDailyAPIClient {
 	locationID = strings.ToLower(strings.TrimSpace(locationID))
 	if locationID == "" {
@@ -72,6 +79,18 @@ func NewBOMDailyAPIClient(locationID string) *BOMDailyAPIClient {
 	}
 
 	return &BOMDailyAPIClient{
+		locationID: locationID,
+		baseURL:    bomAPIBaseURL,
+		client:     newBOMDailyAPIHTTPClient(nil),
+	}
+}
+
+func NewBOMHourlyAPIClient(locationID string) *BOMHourlyAPIClient {
+	locationID = strings.ToLower(strings.TrimSpace(locationID))
+	if locationID == "" {
+		locationID = wangarattaGeohash6
+	}
+	return &BOMHourlyAPIClient{
 		locationID: locationID,
 		baseURL:    bomAPIBaseURL,
 		client:     newBOMDailyAPIHTTPClient(nil),
@@ -104,6 +123,18 @@ func (b *BOMDailyAPIClient) Endpoint() string {
 }
 
 func (b *BOMDailyAPIClient) LocationID() string {
+	return b.locationID
+}
+
+func (b *BOMHourlyAPIClient) Source() string {
+	return bomHourlyAPISource
+}
+
+func (b *BOMHourlyAPIClient) Endpoint() string {
+	return fmt.Sprintf("locations/%s/forecasts/hourly", b.locationID)
+}
+
+func (b *BOMHourlyAPIClient) LocationID() string {
 	return b.locationID
 }
 
@@ -161,6 +192,27 @@ type bomRainAmount struct {
 	Min   *float64 `json:"min"`
 	Max   *float64 `json:"max"`
 	Units string   `json:"units"`
+}
+
+type bomHourlyResponse struct {
+	Data []bomHourlyForecast `json:"data"`
+}
+
+type bomHourlyForecast struct {
+	Time      string         `json:"time"`
+	Temp      *float64       `json:"temp"`
+	FeelsLike *float64       `json:"temp_feels_like"`
+	Dewpoint  *float64       `json:"dew_point"`
+	Humidity  *int64         `json:"relative_humidity"`
+	IsNight   bool           `json:"is_night"`
+	Rain      *bomRain       `json:"rain"`
+	Wind      *bomHourlyWind `json:"wind"`
+}
+
+type bomHourlyWind struct {
+	SpeedKMH  *float64 `json:"speed_kilometre"`
+	GustKMH   *float64 `json:"gust_speed_kilometre"`
+	Direction *string  `json:"direction"`
 }
 
 func (b *BOMClient) FetchForecasts() ([]models.Forecast, string, *FetchResult, error) {
@@ -236,6 +288,38 @@ func (b *BOMDailyAPIClient) FetchForecasts() ([]models.Forecast, string, *FetchR
 	}
 
 	return forecasts, string(body), result, nil
+}
+
+func (b *BOMHourlyAPIClient) FetchForecastPeriods() ([]models.ForecastPeriod, string, *FetchResult, error) {
+	result := &FetchResult{}
+	url := fmt.Sprintf("%s/%s", strings.TrimRight(b.baseURL, "/"), b.Endpoint())
+
+	resp, err := b.client.Get(url)
+	if err != nil {
+		result.Error = fmt.Errorf("fetch hourly forecast: %w", err)
+		return nil, "", result, result.Error
+	}
+	defer func() { _ = resp.Body.Close() }()
+	result.HTTPStatus = resp.StatusCode
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		result.Error = fmt.Errorf("read hourly forecast body: %w", err)
+		return nil, "", result, result.Error
+	}
+	result.ResponseSize = len(body)
+	if resp.StatusCode != http.StatusOK {
+		result.Error = fmt.Errorf("fetch hourly forecast: status %d: %s", resp.StatusCode, truncateBody(body))
+		return nil, string(body), result, result.Error
+	}
+
+	periods, parseResult, err := parseBOMHourlyAPIForecasts(body, b.locationID, time.Now().UTC())
+	mergeFetchResult(result, parseResult)
+	if err != nil {
+		result.Error = err
+		return nil, string(body), result, err
+	}
+	return periods, string(body), result, nil
 }
 
 func parseLegacyBOMForecasts(body []byte, areaCode string, fetchedAt time.Time) ([]models.Forecast, *FetchResult, error) {
@@ -395,6 +479,94 @@ func parseBOMDailyAPIForecasts(body []byte, locationID string, fetchedAt time.Ti
 	}
 
 	return forecasts, result, nil
+}
+
+func parseBOMHourlyAPIForecasts(body []byte, locationID string, fetchedAt time.Time) ([]models.ForecastPeriod, *FetchResult, error) {
+	result := &FetchResult{}
+	var data bomHourlyResponse
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil, result, fmt.Errorf("unmarshal hourly forecast: %w", err)
+	}
+
+	mel, err := time.LoadLocation("Australia/Melbourne")
+	if err != nil {
+		return nil, result, fmt.Errorf("load Melbourne timezone: %w", err)
+	}
+	fetchedLocal := fetchedAt.In(mel)
+	fetchedDate := time.Date(fetchedLocal.Year(), fetchedLocal.Month(), fetchedLocal.Day(), 0, 0, 0, 0, time.UTC)
+
+	periods := make([]models.ForecastPeriod, 0, len(data.Data))
+	var parseErrors []string
+	for i, hour := range data.Data {
+		periodStart, err := time.Parse(time.RFC3339, hour.Time)
+		if err != nil {
+			parseErrors = append(parseErrors, fmt.Sprintf("data[%d].time=%q: %v", i, hour.Time, err))
+			continue
+		}
+		localStart := periodStart.In(mel)
+		validDate := time.Date(localStart.Year(), localStart.Month(), localStart.Day(), 0, 0, 0, 0, time.UTC)
+		period := models.ForecastPeriod{
+			Source:        bomHourlyAPISource,
+			FetchedAt:     fetchedAt,
+			ValidDate:     validDate,
+			DayOfForecast: int(validDate.Sub(fetchedDate) / (24 * time.Hour)),
+			Period:        "hourly",
+			PeriodStart:   periodStart.UTC(),
+			PeriodEnd:     periodStart.Add(time.Hour).UTC(),
+			IsNight:       hour.IsNight,
+			LocationID:    sql.NullString{String: locationID, Valid: true},
+			RawPeriodKey:  hour.Time,
+		}
+		appendNumericForecastComponent(&period, models.ForecastMetricTemperature, nullFloat64(hour.Temp), sql.NullFloat64{}, sql.NullFloat64{}, models.ForecastUnitCelsius)
+		appendNumericForecastComponent(&period, models.ForecastMetricFeelsLike, nullFloat64(hour.FeelsLike), sql.NullFloat64{}, sql.NullFloat64{}, models.ForecastUnitCelsius)
+		appendNumericForecastComponent(&period, models.ForecastMetricDewpoint, nullFloat64(hour.Dewpoint), sql.NullFloat64{}, sql.NullFloat64{}, models.ForecastUnitCelsius)
+		if hour.Humidity != nil {
+			appendNumericForecastComponent(&period, models.ForecastMetricHumidity, sql.NullFloat64{Float64: float64(*hour.Humidity), Valid: true}, sql.NullFloat64{}, sql.NullFloat64{}, models.ForecastUnitPercent)
+		}
+		if hour.Rain != nil {
+			if hour.Rain.Chance != nil {
+				appendNumericForecastComponent(&period, models.ForecastMetricPrecipChance, sql.NullFloat64{Float64: float64(*hour.Rain.Chance), Valid: true}, sql.NullFloat64{}, sql.NullFloat64{}, models.ForecastUnitPercent)
+			}
+			if hour.Rain.Amount != nil {
+				unit := strings.TrimSpace(hour.Rain.Amount.Units)
+				if unit == "" {
+					unit = models.ForecastUnitMillimetres
+				}
+				appendNumericForecastComponent(&period, models.ForecastMetricPrecipAmount, sql.NullFloat64{}, nullFloat64(hour.Rain.Amount.Min), nullFloat64(hour.Rain.Amount.Max), unit)
+			}
+		}
+		if hour.Wind != nil {
+			appendNumericForecastComponent(&period, models.ForecastMetricWindSpeed, nullFloat64(hour.Wind.SpeedKMH), sql.NullFloat64{}, sql.NullFloat64{}, models.ForecastUnitKilometresPerHour)
+			appendNumericForecastComponent(&period, models.ForecastMetricWindGust, nullFloat64(hour.Wind.GustKMH), sql.NullFloat64{}, sql.NullFloat64{}, models.ForecastUnitKilometresPerHour)
+			if direction := trimmedNullString(hour.Wind.Direction); direction.Valid {
+				period.Components = append(period.Components, models.ForecastComponent{
+					Metric:    models.ForecastMetricWindDir,
+					TextValue: direction,
+				})
+			}
+		}
+		periods = append(periods, period)
+	}
+
+	result.RecordCount = len(periods)
+	if len(parseErrors) > 0 {
+		result.ParseErrors = len(parseErrors)
+		result.ParseError = fmt.Sprintf("%d parse errors: %s", len(parseErrors), parseErrors[0])
+	}
+	return periods, result, nil
+}
+
+func appendNumericForecastComponent(period *models.ForecastPeriod, metric string, value, valueMin, valueMax sql.NullFloat64, unit string) {
+	if !value.Valid && !valueMin.Valid && !valueMax.Valid {
+		return
+	}
+	period.Components = append(period.Components, models.ForecastComponent{
+		Metric:   metric,
+		Value:    value,
+		ValueMin: valueMin,
+		ValueMax: valueMax,
+		Unit:     sql.NullString{String: unit, Valid: unit != ""},
+	})
 }
 
 func mergeFetchResult(dst, src *FetchResult) {

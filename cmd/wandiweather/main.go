@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -34,6 +35,14 @@ var cli struct {
 	EcowittAPIKey          string `name:"ecowitt-api-key" env:"ECOWITT_API_KEY" help:"Ecowitt cloud API key."`
 	EcowittAppKey          string `name:"ecowitt-app-key" env:"ECOWITT_APP_KEY" help:"Ecowitt cloud application key."`
 	EcowittMAC             string `name:"ecowitt-mac" env:"ECOWITT_MAC" help:"Ecowitt device MAC address."`
+}
+
+func sqliteDSN(path string) string {
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	return path + separator + "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
 }
 
 var defaultStations = []models.Station{
@@ -87,7 +96,7 @@ func main() {
 		log.Fatal("missing Weather Underground API key")
 	}
 
-	db, err := sql.Open("sqlite", cli.DB)
+	db, err := sql.Open("sqlite", sqliteDSN(cli.DB))
 	if err != nil {
 		log.Fatalf("open database: %v", err)
 	}
@@ -96,10 +105,6 @@ func main() {
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		log.Printf("warning: failed to set journal_mode=WAL: %v", err)
 	}
-	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
-		log.Printf("warning: failed to set busy_timeout: %v", err)
-	}
-
 	// Load timezone once at startup
 	loc, err := time.LoadLocation("Australia/Melbourne")
 	if err != nil {
