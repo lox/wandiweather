@@ -22,12 +22,12 @@ COPY go.mod go.sum ./
 # Install mise, install the pinned Go toolchain, and download Go dependencies.
 RUN curl https://mise.run | sh && \
     mise trust -a && \
-    mise install go && \
-    mise exec -- go mod download
+    mise install go@1.25.5 && \
+    mise exec go@1.25.5 -- go mod download
 
 # Copy source and build
 COPY . .
-RUN mise exec -- go build -o wandiweather ./cmd/wandiweather
+RUN mise exec go@1.25.5 -- go build -o wandiweather ./cmd/wandiweather
 
 FROM debian:bookworm-slim
 
