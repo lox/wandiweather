@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lox/wandiweather/internal/models"
 )
 
 func TestBOMDailyAPIHTTPClientForcesIPv4(t *testing.T) {
@@ -177,6 +179,67 @@ func TestBOMDailyAPIClientFetchForecasts_UsesWangarattaDailyAPI(t *testing.T) {
 	}
 	if got, want := second.ValidDate, mustMelbourneValidDate(t, "2026-03-02T13:00:00Z"); !got.Equal(want) {
 		t.Fatalf("second.ValidDate = %s, want %s", got.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+}
+
+func TestParseBOMHourlyAPIForecasts(t *testing.T) {
+	fetchedAt := time.Date(2026, time.July, 15, 10, 30, 0, 0, time.UTC)
+	body := []byte(`{
+		"data": [
+			{
+				"time": "2026-07-15T11:00:00Z",
+				"temp": 9,
+				"temp_feels_like": 7,
+				"dew_point": 6,
+				"relative_humidity": 81,
+				"is_night": true,
+				"icon_descriptor": "shower",
+				"rain": {
+					"chance": 70,
+					"amount": {"min": 0, "max": 2, "units": "mm"}
+				},
+				"wind": {
+					"speed_kilometre": 12,
+					"gust_speed_kilometre": 20,
+					"direction": "SW"
+				}
+			},
+			{
+				"time": "not-a-time",
+				"rain": {"chance": 10}
+			}
+		]
+	}`)
+
+	periods, result, err := parseBOMHourlyAPIForecasts(body, "r3811m", fetchedAt)
+	if err != nil {
+		t.Fatalf("parseBOMHourlyAPIForecasts: %v", err)
+	}
+	if len(periods) != 1 {
+		t.Fatalf("len(periods) = %d, want 1", len(periods))
+	}
+	if result.ParseErrors != 1 || result.RecordCount != 1 {
+		t.Fatalf("result = %+v, want one record and one parse error", result)
+	}
+
+	period := periods[0]
+	if period.Source != "bom_hourly_api" || period.Period != "hourly" {
+		t.Fatalf("period identity = %s/%s, want bom_hourly_api/hourly", period.Source, period.Period)
+	}
+	if period.PeriodStart != time.Date(2026, time.July, 15, 11, 0, 0, 0, time.UTC) {
+		t.Fatalf("PeriodStart = %s", period.PeriodStart)
+	}
+	chance, ok := period.Component(models.ForecastMetricPrecipChance)
+	if !ok || !chance.Value.Valid || chance.Value.Float64 != 70 {
+		t.Fatalf("precipitation chance component = %+v, %v; want 70", chance, ok)
+	}
+	amount, ok := period.Component(models.ForecastMetricPrecipAmount)
+	if !ok || !amount.ValueMax.Valid || amount.ValueMax.Float64 != 2 {
+		t.Fatalf("precipitation amount component = %+v, %v; want max 2", amount, ok)
+	}
+	temperature, ok := period.Component(models.ForecastMetricTemperature)
+	if !ok || !temperature.Value.Valid || temperature.Value.Float64 != 9 || !period.IsNight {
+		t.Fatalf("hourly weather fields = %+v", period)
 	}
 }
 

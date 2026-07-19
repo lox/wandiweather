@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lox/wandiweather/internal/models"
 )
@@ -431,6 +432,52 @@ func TestParseForecastResponse(t *testing.T) {
 	}
 	if daypart.PrecipChance[4] == nil || *daypart.PrecipChance[4] != 60 {
 		t.Error("PrecipChance[4] should be 60")
+	}
+}
+
+func TestParseForecastsPreservesDaypartRainTiming(t *testing.T) {
+	jsonData := []byte(`{
+		"validTimeLocal": ["2025-01-20T07:00:00+1100", "2025-01-21T07:00:00+1100"],
+		"calendarDayTemperatureMax": [28.0, 30.0],
+		"calendarDayTemperatureMin": [15.0, 18.0],
+		"narrative": ["Showers tonight", "Rain easing"],
+		"daypart": [{
+			"precipChance": [10, 70, 80, 30],
+			"qpf": [0.0, 4.5, 8.0, 1.0],
+			"windSpeed": [15, 10, 20, 12],
+			"windDirectionCardinal": ["N", "NE", "NW", "W"]
+		}]
+	}`)
+
+	forecasts, result, err := parseForecasts(jsonData, "-36.794,146.977", time.Date(2025, 1, 19, 20, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("parseForecasts: %v", err)
+	}
+	if result.RecordCount != 2 {
+		t.Fatalf("RecordCount = %d, want 2", result.RecordCount)
+	}
+	if len(forecasts) != 2 {
+		t.Fatalf("len(forecasts) = %d, want 2", len(forecasts))
+	}
+
+	first := forecasts[0]
+	if !first.PrecipChanceDay.Valid || first.PrecipChanceDay.Int64 != 10 {
+		t.Fatalf("first.PrecipChanceDay = %+v, want 10", first.PrecipChanceDay)
+	}
+	if !first.PrecipChanceNight.Valid || first.PrecipChanceNight.Int64 != 70 {
+		t.Fatalf("first.PrecipChanceNight = %+v, want 70", first.PrecipChanceNight)
+	}
+	if !first.PrecipAmountDay.Valid || first.PrecipAmountDay.Float64 != 0 {
+		t.Fatalf("first.PrecipAmountDay = %+v, want 0", first.PrecipAmountDay)
+	}
+	if !first.PrecipAmountNight.Valid || first.PrecipAmountNight.Float64 != 4.5 {
+		t.Fatalf("first.PrecipAmountNight = %+v, want 4.5", first.PrecipAmountNight)
+	}
+	if !first.PrecipChance.Valid || first.PrecipChance.Int64 != 70 {
+		t.Fatalf("first.PrecipChance = %+v, want aggregate max 70", first.PrecipChance)
+	}
+	if !first.PrecipAmount.Valid || first.PrecipAmount.Float64 != 4.5 {
+		t.Fatalf("first.PrecipAmount = %+v, want aggregate 4.5", first.PrecipAmount)
 	}
 }
 

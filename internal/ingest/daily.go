@@ -21,6 +21,11 @@ func NewDailyJobs(store *store.Store) *DailyJobs {
 
 const rawPayloadRetentionDays = 90
 
+const (
+	rainVerificationThreshold       = 0.2
+	rainChanceVerificationThreshold = 30.0
+)
+
 func (d *DailyJobs) RunAll(forDate time.Time) error {
 	log.Printf("daily: running jobs for %s", forDate.Format("2006-01-02"))
 
@@ -29,6 +34,11 @@ func (d *DailyJobs) RunAll(forDate time.Time) error {
 	if err := d.ComputeDailySummaries(forDate); err != nil {
 		log.Printf("daily: summaries error: %v", err)
 		errs = append(errs, fmt.Errorf("summaries: %w", err))
+	}
+
+	if err := d.VerifyRainTiming(forDate); err != nil {
+		log.Printf("daily: rain timing verification error: %v", err)
+		errs = append(errs, fmt.Errorf("rain timing verification: %w", err))
 	}
 
 	if err := d.VerifyForecasts(forDate); err != nil {
@@ -60,6 +70,115 @@ func (d *DailyJobs) RunAll(forDate time.Time) error {
 		return fmt.Errorf("daily jobs had %d errors", len(errs))
 	}
 	return nil
+}
+
+// VerifyRainTiming computes primary-station period actuals and verifies WU's
+// day/night rain signals. Incomplete observation windows are persisted for
+// coverage diagnostics but are not scored.
+func (d *DailyJobs) VerifyRainTiming(forDate time.Time) error {
+	primary, err := d.store.GetPrimaryStation()
+	if err != nil {
+		return err
+	}
+	if primary == nil {
+		log.Println("daily: no primary station configured for rain timing verification")
+		return nil
+	}
+
+	observed := make(map[string]*models.ObservedPeriod, 3)
+	for _, periodName := range []string{"daily", "day", "night"} {
+		period, err := d.store.ComputeObservedRainPeriod(primary.StationID, forDate, periodName)
+		if err != nil {
+			return fmt.Errorf("compute observed %s period: %w", periodName, err)
+		}
+		if err := d.store.UpsertObservedPeriod(*period); err != nil {
+			return fmt.Errorf("upsert observed %s period: %w", periodName, err)
+		}
+		stored, err := d.store.GetObservedPeriod(primary.StationID, forDate, periodName)
+		if err != nil {
+			return fmt.Errorf("reload observed %s period: %w", periodName, err)
+		}
+		observed[periodName] = stored
+		if stored != nil && !stored.IsComplete {
+			if err := d.store.DeleteForecastComponentVerifications(
+				stored.ID,
+				models.ForecastVerificationRainOccurrence,
+				models.ForecastVerifierRainOccurrenceV1,
+			); err != nil {
+				return fmt.Errorf("clear incomplete %s verification: %w", periodName, err)
+			}
+		}
+	}
+
+	periods, err := d.store.GetRainTimingVerificationPeriods(forDate)
+	if err != nil {
+		return err
+	}
+	for _, period := range periods {
+		actual := observed[period.Period]
+		if actual == nil || !actual.IsComplete || !actual.PrecipTotal.Valid {
+			continue
+		}
+		component, ok := rainSignalComponent(period)
+		if !ok {
+			continue
+		}
+
+		forecastRain := componentPredictsRain(component)
+		actualRain := actual.PrecipTotal.Float64 > rainVerificationThreshold
+		hitClass := classifyRainSignal(forecastRain, actualRain)
+		if err := d.store.UpsertForecastComponentVerification(models.ForecastComponentVerification{
+			ForecastComponentID: component.ID,
+			ObservedPeriodID:    actual.ID,
+			VerificationKind:    models.ForecastVerificationRainOccurrence,
+			ActualValue:         actual.PrecipTotal,
+			ForecastThreshold:   rainForecastThreshold(component),
+			ActualThreshold:     rainVerificationThreshold,
+			VerifierVersion:     models.ForecastVerifierRainOccurrenceV1,
+			HitClass:            hitClass,
+		}); err != nil {
+			return fmt.Errorf("upsert %s rain verification for component %d: %w", period.Period, component.ID, err)
+		}
+	}
+
+	return nil
+}
+
+func rainSignalComponent(period models.ForecastPeriod) (models.ForecastComponent, bool) {
+	if chance, ok := period.Component(models.ForecastMetricPrecipChance); ok {
+		return chance, true
+	}
+	return period.Component(models.ForecastMetricPrecipAmount)
+}
+
+func componentPredictsRain(component models.ForecastComponent) bool {
+	threshold := rainForecastThreshold(component)
+	for _, value := range []sql.NullFloat64{component.Value, component.ValueMin, component.ValueMax} {
+		if value.Valid && value.Float64 >= threshold {
+			return true
+		}
+	}
+	return false
+}
+
+func rainForecastThreshold(component models.ForecastComponent) float64 {
+	if component.Metric == models.ForecastMetricPrecipChance {
+		return rainChanceVerificationThreshold
+	}
+	return rainVerificationThreshold
+}
+
+func classifyRainSignal(forecastRain, actualRain bool) string {
+	switch {
+	case forecastRain && actualRain:
+		return "hit"
+	case forecastRain:
+		return "false_alarm"
+	case actualRain:
+		return "miss"
+	default:
+		return "correct_dry"
+	}
 }
 
 // LogIngestHealth logs a summary of ingest health for the last 24 hours.
@@ -349,6 +468,9 @@ func (d *DailyJobs) BackfillVerification() error {
 	for _, date := range dates {
 		if date.After(time.Now().Add(-24 * time.Hour)) {
 			continue
+		}
+		if err := d.VerifyRainTiming(date); err != nil {
+			log.Printf("daily: verify rain timing %s: %v", date.Format("2006-01-02"), err)
 		}
 		if err := d.VerifyForecasts(date); err != nil {
 			log.Printf("daily: verify %s: %v", date.Format("2006-01-02"), err)

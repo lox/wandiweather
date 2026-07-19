@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/lox/wandiweather/internal/models"
 )
 
 type migration struct {
@@ -521,6 +523,189 @@ CREATE TABLE IF NOT EXISTS air_quality_readings (
 );
 `,
 	},
+	{
+		Version:     27,
+		Description: "Add daypart precipitation timing to forecasts",
+		SQL: `
+ALTER TABLE forecasts ADD COLUMN precip_chance_day INTEGER;
+ALTER TABLE forecasts ADD COLUMN precip_chance_night INTEGER;
+ALTER TABLE forecasts ADD COLUMN precip_amount_day REAL;
+ALTER TABLE forecasts ADD COLUMN precip_amount_night REAL;
+`,
+	},
+	{
+		Version:     28,
+		Description: "Add normalized forecast component regime",
+		Apply:       createForecastDataRegime,
+	},
+}
+
+func createForecastDataRegime(tx *sql.Tx) error {
+	for _, column := range []string{"wu_forecast_id", "bom_forecast_id"} {
+		if _, err := tx.Exec(fmt.Sprintf(`
+			UPDATE displayed_forecasts
+			SET %[1]s = NULL
+			WHERE %[1]s IS NOT NULL
+			  AND NOT EXISTS (
+				SELECT 1 FROM forecasts WHERE forecasts.id = displayed_forecasts.%[1]s
+			)
+		`, column)); err != nil {
+			return fmt.Errorf("repair displayed_forecasts.%s references: %w", column, err)
+		}
+	}
+
+	if _, err := tx.Exec(`
+CREATE TABLE forecast_periods (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    forecast_id INTEGER REFERENCES forecasts(id),
+    source TEXT NOT NULL CHECK (LENGTH(TRIM(source)) > 0),
+    fetched_at DATETIME NOT NULL,
+    valid_date DATE NOT NULL,
+    day_of_forecast INTEGER NOT NULL CHECK (day_of_forecast >= 0),
+    period TEXT NOT NULL CHECK (period IN ('daily', 'day', 'night', 'hourly')),
+    period_start DATETIME NOT NULL,
+    period_end DATETIME NOT NULL CHECK (period_end > period_start),
+    is_night BOOLEAN NOT NULL DEFAULT FALSE,
+    location_id TEXT,
+    raw_period_key TEXT NOT NULL CHECK (LENGTH(TRIM(raw_period_key)) > 0)
+);
+
+CREATE UNIQUE INDEX idx_forecast_periods_unique
+ON forecast_periods(source, fetched_at, period_start, period, COALESCE(location_id, ''));
+
+CREATE INDEX idx_forecast_periods_lookup
+ON forecast_periods(source, period, fetched_at, period_start);
+
+CREATE INDEX idx_forecast_periods_forecast_id
+ON forecast_periods(forecast_id);
+
+CREATE TABLE forecast_components (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    forecast_period_id INTEGER NOT NULL REFERENCES forecast_periods(id) ON DELETE CASCADE,
+    metric TEXT NOT NULL CHECK (LENGTH(TRIM(metric)) > 0),
+    value REAL,
+    value_min REAL,
+    value_max REAL,
+    value_text TEXT,
+    unit TEXT,
+    CHECK (
+        (value_text IS NOT NULL AND LENGTH(TRIM(value_text)) > 0
+            AND value IS NULL AND value_min IS NULL AND value_max IS NULL AND unit IS NULL)
+        OR
+        (value_text IS NULL AND unit IS NOT NULL AND (
+            (value IS NOT NULL AND value_min IS NULL AND value_max IS NULL)
+            OR
+            (value IS NULL AND (value_min IS NOT NULL OR value_max IS NOT NULL))
+        ))
+    ),
+    CHECK (value_min IS NULL OR value_max IS NULL OR value_max >= value_min),
+    CHECK (metric NOT IN ('precip_chance', 'humidity') OR (
+        (value IS NULL OR value BETWEEN 0 AND 100)
+        AND (value_min IS NULL OR value_min BETWEEN 0 AND 100)
+        AND (value_max IS NULL OR value_max BETWEEN 0 AND 100)
+    )),
+    CHECK (metric NOT IN ('precip_amount', 'wind_speed', 'wind_gust') OR (
+        (value IS NULL OR value >= 0)
+        AND (value_min IS NULL OR value_min >= 0)
+        AND (value_max IS NULL OR value_max >= 0)
+    )),
+    UNIQUE(forecast_period_id, metric)
+);
+
+CREATE INDEX idx_forecast_components_metric
+ON forecast_components(metric, forecast_period_id);
+
+CREATE TABLE observed_periods (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    station_id TEXT NOT NULL,
+    valid_date DATE NOT NULL,
+    period TEXT NOT NULL CHECK (period IN ('daily', 'day', 'night')),
+    period_start DATETIME NOT NULL,
+    period_end DATETIME NOT NULL CHECK (period_end > period_start),
+    precip_total REAL CHECK (precip_total >= 0),
+    observation_count INTEGER NOT NULL CHECK (observation_count >= 0),
+    coverage_minutes INTEGER NOT NULL CHECK (coverage_minutes >= 0),
+    is_complete BOOLEAN NOT NULL DEFAULT FALSE CHECK (is_complete IN (0, 1)),
+    computed_at DATETIME NOT NULL,
+    UNIQUE(station_id, valid_date, period)
+);
+
+CREATE INDEX idx_observed_periods_date
+ON observed_periods(valid_date, period);
+
+CREATE TABLE forecast_component_verification (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    forecast_component_id INTEGER NOT NULL REFERENCES forecast_components(id) ON DELETE CASCADE,
+    observed_period_id INTEGER NOT NULL REFERENCES observed_periods(id),
+    verification_kind TEXT NOT NULL,
+    actual_value REAL NOT NULL,
+    forecast_threshold REAL NOT NULL CHECK (forecast_threshold >= 0),
+    actual_threshold REAL NOT NULL CHECK (actual_threshold >= 0),
+    verifier_version TEXT NOT NULL CHECK (LENGTH(TRIM(verifier_version)) > 0),
+    hit_class TEXT NOT NULL CHECK (hit_class IN ('hit', 'false_alarm', 'miss', 'correct_dry')),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(forecast_component_id, observed_period_id, verification_kind, verifier_version)
+);
+
+CREATE INDEX idx_forecast_component_verification_stats
+ON forecast_component_verification(verification_kind, created_at);
+`); err != nil {
+		return fmt.Errorf("create forecast data regime: %w", err)
+	}
+
+	rows, err := tx.Query(`
+		SELECT id, source, fetched_at, valid_date, day_of_forecast,
+		       precip_chance, precip_amount, precip_range,
+		       precip_chance_day, precip_chance_night,
+		       precip_amount_day, precip_amount_night,
+		       precip_min, precip_max, precip_units, location_id
+		FROM forecasts
+	`)
+	if err != nil {
+		return fmt.Errorf("query forecasts for period backfill: %w", err)
+	}
+
+	loc, err := time.LoadLocation("Australia/Melbourne")
+	if err != nil {
+		return fmt.Errorf("load Melbourne timezone: %w", err)
+	}
+	for rows.Next() {
+		var forecast models.Forecast
+		if err := rows.Scan(
+			&forecast.ID, &forecast.Source, &forecast.FetchedAt, &forecast.ValidDate,
+			&forecast.DayOfForecast, &forecast.PrecipChance, &forecast.PrecipAmount,
+			&forecast.PrecipRange, &forecast.PrecipChanceDay,
+			&forecast.PrecipChanceNight, &forecast.PrecipAmountDay,
+			&forecast.PrecipAmountNight, &forecast.PrecipMin,
+			&forecast.PrecipMax, &forecast.PrecipUnits, &forecast.LocationID,
+		); err != nil {
+			return fmt.Errorf("scan forecast for period backfill: %w", err)
+		}
+		periods := forecastPeriodsForForecast(forecast, forecast.ID, loc)
+		for _, period := range periods {
+			if err := insertForecastPeriodTx(tx, period); err != nil {
+				return fmt.Errorf("backfill forecast %d period %s: %w", forecast.ID, period.Period, err)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close forecast backfill rows: %w", err)
+	}
+
+	for _, column := range []string{
+		"precip_chance_day",
+		"precip_chance_night",
+		"precip_amount_day",
+		"precip_amount_night",
+	} {
+		if _, err := tx.Exec("ALTER TABLE forecasts DROP COLUMN " + column); err != nil {
+			return fmt.Errorf("drop forecasts.%s: %w", column, err)
+		}
+	}
+	return nil
 }
 
 func ensureBOMDailyAPIForecastColumns(tx *sql.Tx) error {

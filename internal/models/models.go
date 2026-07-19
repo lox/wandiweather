@@ -56,17 +56,22 @@ const (
 )
 
 type Forecast struct {
-	ID                int64
-	Source            string // "wu", "bom", or a shadow source such as "bom_daily_api"
-	FetchedAt         time.Time
-	ValidDate         time.Time
-	DayOfForecast     int
-	TempMax           sql.NullFloat64
-	TempMin           sql.NullFloat64
-	Humidity          sql.NullInt64
-	PrecipChance      sql.NullInt64
-	PrecipAmount      sql.NullFloat64
-	PrecipRange       sql.NullString // BOM format: "1 to 5 mm"
+	ID            int64
+	Source        string // "wu", "bom", or a shadow source such as "bom_daily_api"
+	FetchedAt     time.Time
+	ValidDate     time.Time
+	DayOfForecast int
+	TempMax       sql.NullFloat64
+	TempMin       sql.NullFloat64
+	Humidity      sql.NullInt64
+	PrecipChance  sql.NullInt64
+	PrecipAmount  sql.NullFloat64
+	PrecipRange   sql.NullString // BOM format: "1 to 5 mm"
+	// Daypart fields are transient ingest values persisted as forecast components.
+	PrecipChanceDay   sql.NullInt64
+	PrecipChanceNight sql.NullInt64
+	PrecipAmountDay   sql.NullFloat64
+	PrecipAmountNight sql.NullFloat64
 	PrecipMin         sql.NullFloat64
 	PrecipMax         sql.NullFloat64
 	PrecipUnits       sql.NullString
@@ -77,6 +82,61 @@ type Forecast struct {
 	NarrativeExtended sql.NullString
 	RawJSON           string
 	LocationID        sql.NullString // Geocode (WU) or AAC code (BOM)
+}
+
+type ForecastPeriod struct {
+	ID            int64
+	ForecastID    sql.NullInt64
+	Source        string
+	FetchedAt     time.Time
+	ValidDate     time.Time
+	DayOfForecast int
+	Period        string
+	PeriodStart   time.Time
+	PeriodEnd     time.Time
+	IsNight       bool
+	LocationID    sql.NullString
+	RawPeriodKey  string
+	Components    []ForecastComponent
+}
+
+const (
+	ForecastMetricPrecipChance = "precip_chance"
+	ForecastMetricPrecipAmount = "precip_amount"
+	ForecastMetricTemperature  = "temperature"
+	ForecastMetricFeelsLike    = "feels_like"
+	ForecastMetricDewpoint     = "dewpoint"
+	ForecastMetricHumidity     = "humidity"
+	ForecastMetricWindSpeed    = "wind_speed"
+	ForecastMetricWindGust     = "wind_gust"
+	ForecastMetricWindDir      = "wind_direction"
+)
+
+const (
+	ForecastUnitPercent           = "percent"
+	ForecastUnitMillimetres       = "mm"
+	ForecastUnitCelsius           = "celsius"
+	ForecastUnitKilometresPerHour = "km/h"
+)
+
+type ForecastComponent struct {
+	ID               int64
+	ForecastPeriodID int64
+	Metric           string
+	Value            sql.NullFloat64
+	ValueMin         sql.NullFloat64
+	ValueMax         sql.NullFloat64
+	TextValue        sql.NullString
+	Unit             sql.NullString
+}
+
+func (p ForecastPeriod) Component(metric string) (ForecastComponent, bool) {
+	for _, component := range p.Components {
+		if component.Metric == metric {
+			return component, true
+		}
+	}
+	return ForecastComponent{}, false
 }
 
 type DailySummary struct {
@@ -131,6 +191,46 @@ type ForecastVerification struct {
 	ActualPrecip      sql.NullFloat64
 	BiasPrecip        sql.NullFloat64
 	CreatedAt         time.Time
+}
+
+type ObservedPeriod struct {
+	ID               int64
+	StationID        string
+	ValidDate        time.Time
+	Period           string
+	PeriodStart      time.Time
+	PeriodEnd        time.Time
+	PrecipTotal      sql.NullFloat64
+	ObservationCount int
+	CoverageMinutes  int
+	IsComplete       bool
+	ComputedAt       time.Time
+}
+
+const (
+	ForecastVerificationRainOccurrence = "rain_occurrence"
+	ForecastVerifierRainOccurrenceV1   = "rain-occurrence-v1"
+)
+
+type ForecastComponentVerification struct {
+	ID                  int64
+	ForecastComponentID int64
+	ObservedPeriodID    int64
+	VerificationKind    string
+	ValidDate           time.Time
+	Source              string
+	DayOfForecast       int
+	Period              string
+	Metric              string
+	ForecastValue       sql.NullFloat64
+	ForecastValueMin    sql.NullFloat64
+	ForecastValueMax    sql.NullFloat64
+	ActualValue         sql.NullFloat64
+	ForecastThreshold   float64
+	ActualThreshold     float64
+	VerifierVersion     string
+	HitClass            string
+	CreatedAt           time.Time
 }
 
 type VerificationStats struct {

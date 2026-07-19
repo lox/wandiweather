@@ -24,6 +24,7 @@ type Scheduler struct {
 	forecast         *ForecastClient
 	bom              *BOMClient
 	bomDailyAPI      *BOMDailyAPIClient
+	bomHourlyAPI     *BOMHourlyAPIClient
 	daily            *DailyJobs
 	stationIDs       []string
 	loc              *time.Location
@@ -57,6 +58,7 @@ func NewScheduler(store *store.Store, pws *PWS, forecast *ForecastClient, statio
 		forecast:        forecast,
 		bom:             NewBOMClient(""),
 		bomDailyAPI:     NewBOMDailyAPIClient(""),
+		bomHourlyAPI:    NewBOMHourlyAPIClient(""),
 		daily:           NewDailyJobs(store),
 		stationIDs:      stationIDs,
 		loc:             loc,
@@ -215,8 +217,68 @@ func (s *Scheduler) ingestForecasts() {
 	}
 
 	s.ingestBOMForecastSources()
+	s.ingestBOMHourlyForecasts()
 
 	s.ensureWeatherImage(forecasts)
+}
+
+func (s *Scheduler) ingestBOMHourlyForecasts() {
+	if s.bomHourlyAPI == nil {
+		return
+	}
+
+	locationID := s.bomHourlyAPI.LocationID()
+	run, _ := s.store.StartIngestRun(s.bomHourlyAPI.Source(), s.bomHourlyAPI.Endpoint(), nil, &locationID)
+	periods, rawBody, fetchResult, err := s.bomHourlyAPI.FetchForecastPeriods()
+	if run != nil {
+		run.Success = err == nil
+		if fetchResult != nil {
+			run.HTTPStatus = sql.NullInt64{Int64: int64(fetchResult.HTTPStatus), Valid: fetchResult.HTTPStatus > 0}
+			run.ResponseSizeBytes = sql.NullInt64{Int64: int64(fetchResult.ResponseSize), Valid: fetchResult.ResponseSize > 0}
+			run.RecordsParsed = sql.NullInt64{Int64: int64(fetchResult.RecordCount), Valid: true}
+			if fetchResult.ParseErrors > 0 {
+				run.ParseErrors = sql.NullInt64{Int64: int64(fetchResult.ParseErrors), Valid: true}
+				run.ErrorMessage = sql.NullString{String: fetchResult.ParseError, Valid: true}
+			}
+		}
+		if err != nil {
+			run.ErrorMessage = sql.NullString{String: err.Error(), Valid: true}
+		}
+	}
+
+	if rawBody != "" && run != nil {
+		if _, payloadErr := s.store.StoreRawPayload(&run.ID, s.bomHourlyAPI.Source(), s.bomHourlyAPI.Endpoint(), nil, &locationID, []byte(rawBody)); payloadErr != nil {
+			log.Printf("scheduler: store BOM hourly raw payload: %v", payloadErr)
+		}
+	}
+
+	inserted := 0
+	var storageErr error
+	if err != nil {
+		log.Printf("scheduler: fetch BOM hourly forecast: %v", err)
+	} else {
+		for _, period := range periods {
+			if insertErr := s.store.InsertForecastPeriod(period); insertErr != nil {
+				log.Printf("scheduler: insert BOM hourly forecast period: %v", insertErr)
+				if storageErr == nil {
+					storageErr = fmt.Errorf("store period %s: %w", period.RawPeriodKey, insertErr)
+				}
+				continue
+			}
+			inserted++
+		}
+		log.Printf("scheduler: inserted %d BOM hourly forecast periods", inserted)
+	}
+	if run != nil {
+		run.RecordsStored = sql.NullInt64{Int64: int64(inserted), Valid: true}
+		if storageErr != nil {
+			run.Success = false
+			run.ErrorMessage = sql.NullString{String: storageErr.Error(), Valid: true}
+		}
+		if completeErr := s.store.CompleteIngestRun(run); completeErr != nil {
+			log.Printf("scheduler: complete BOM hourly ingest run: %v", completeErr)
+		}
+	}
 }
 
 func (s *Scheduler) ingestBOMForecastSources() {
